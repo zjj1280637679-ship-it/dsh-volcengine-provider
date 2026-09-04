@@ -49,7 +49,7 @@ Model
 
 由于该源码版本尚未同步发布全部 npm 包，当前 CI 可安装基线使用 `@deepseek-ai/dsh-llm@0.1.2-rc.1`，并保留对 `0.1.3-alpha.1` 的 peer 兼容声明。
 
-Provider 将按 Harness 官方 `LlmAdapter.stream()` / `ctx.llm.registerAdapter()` 契约实现。
+Provider 按 Harness 官方 `LlmAdapter.stream()` / `ctx.llm.registerAdapter()` 契约演进。
 
 ## 当前进度
 
@@ -64,19 +64,32 @@ Provider 将按 Harness 官方 `LlmAdapter.stream()` / `ctx.llm.registerAdapter(
 
 ### 第二步：Fake Ark 验证环境 ✅
 
-已完成并通过 CI：
-
 - 单次、无隐式 retry/fallback 的 HTTP transport；
 - Fake Ark 本地请求捕获服务器；
 - 三 Route path / credential 隔离测试；
 - unknown model id / unknown request body 直达测试；
 - image / video / audio `force_enable` 直达测试；
 - 二进制与 base64/data URL 的 SHA-256 passthrough 测试；
-- DSH `ContentBlockMap` / `ModelModalityMap` 的视频、音频扩展类型；
-- 当前门禁：5 个测试文件、17 个测试全部通过。
+- DSH `ContentBlockMap` / `ModelModalityMap` 的视频、音频扩展类型。
 
-详细验证环境见 [`docs/verification-environment.md`](docs/verification-environment.md)。
-详细目标与验收不变量见 [`docs/design-contract.md`](docs/design-contract.md)。
+### 第三步：生产 Chat Adapter ✅
+
+当前 `adapter-v0.1` 分支已经实现并通过 Fake Ark 验证：
+
+- `GenerateOptions` → OpenAI-compatible Ark Chat 请求；
+- SSE framing、`[DONE]`、reasoning/text/tool-call/usage → `StreamChunk`；
+- `stream:false` 自定义请求体仍能走完整 JSON Chat 响应；
+- Coding Plan 429 仍只有一次 HTTP 尝试，不发生跨 Route fallback；
+- HTTP 失败保留 Harness 公共机器码以及 `status / requestId / Retry-After` 结构化事实；
+- `/models` 仅把 `id/name/description` 投影到 advisory catalog，其他丰富字段完整保留为 Raw Feedback；
+- Feedback 不生成 `inputModalities/context/reasoning` 等 Harness 限制；
+- image / video / audio 只做 Provider 边界透明编码，不压缩、不抽帧、不转码；
+- npm 可安装基线 `@deepseek-ai/dsh-llm@0.1.2-rc.1` typecheck 通过；
+- 当前总门禁：**8 个测试文件、29 个测试，29/29 通过**。
+
+第三步详细设计与验收见 [`docs/step3-adapter-plan.md`](docs/step3-adapter-plan.md)。
+验证环境见 [`docs/verification-environment.md`](docs/verification-environment.md)。
+总设计合同见 [`docs/design-contract.md`](docs/design-contract.md)。
 
 ## 测试策略
 
@@ -85,6 +98,7 @@ tests/
 ├─ unit/        # 纯逻辑测试
 ├─ fake-ark/    # 本地假方舟，检查最终 HTTP/媒体字节
 ├─ freedom/     # 不削减实验空间的核心验收
+├─ adapter/     # Chat adapter 序列化/流翻译/Fake Ark E2E
 └─ live/        # 真实火山 Smoke/E2E（后续）
 ```
 

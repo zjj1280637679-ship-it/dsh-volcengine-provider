@@ -21,14 +21,14 @@ export interface ArkBinaryRequest extends ArkTransportCommon {
 
 function requestHeaders(
   apiKey: string,
-  contentType: string,
+  contentType: string | undefined,
   additional?: HeadersInit,
 ): Headers {
   const headers = new Headers(additional)
   // Credentials and wire content type are transport-owned and cannot be
   // accidentally replaced by optional attribution/diagnostic headers.
   headers.set('authorization', `Bearer ${apiKey}`)
-  headers.set('content-type', contentType)
+  if (contentType !== undefined) headers.set('content-type', contentType)
   return headers
 }
 
@@ -43,6 +43,17 @@ export async function sendArkJson(request: ArkJsonRequest): Promise<Response> {
     method: 'POST',
     headers: requestHeaders(request.apiKey, 'application/json', request.headers),
     body: JSON.stringify(request.body),
+    redirect: 'error',
+    signal: request.signal,
+  })
+}
+
+/** One-attempt authenticated GET, used for advisory model discovery only. */
+export async function sendArkGet(request: ArkTransportCommon): Promise<Response> {
+  const fetchImpl = request.fetchImpl ?? globalThis.fetch
+  return fetchImpl(joinRouteUrl(request.route, request.operation), {
+    method: 'GET',
+    headers: requestHeaders(request.apiKey, undefined, request.headers),
     redirect: 'error',
     signal: request.signal,
   })

@@ -29,5 +29,5 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Freedom + Fake Ark tests
+      - name: Freedom + Fake Ark + Adapter tests
         run: pnpm test:ci
