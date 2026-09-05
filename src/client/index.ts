@@ -7,18 +7,24 @@ import { VolcengineCard } from './Card.js'
 import { VolcenginePluginSettingsCard } from './PluginSettingsCard.js'
 import { createCardOperations } from './operations.js'
 import { registerMediaDock } from './media-registration.js'
+import { hasSlotRegistry } from '../host-compat.js'
 
-// Both supported generations share Slots. The settings transport is selected
-// lazily after the injected client packages have completed activation.
+// Slot presence is the only hard activation dependency. Individual seats and
+// settings transports are selected lazily by public capability shape.
 export const inject = ['slots']
 
 /** One namespace registration serves all present and future route cards. */
 export function apply(ctx: Context): void {
+  const slots = ctx.get('slots')
+  if (!hasSlotRegistry(slots)) {
+    ctx.logger.warn('dsh-volcengine-provider: client slots capability is unavailable; provider UI was not mounted')
+    return
+  }
   registerMediaDock(ctx)
   const operations = createCardOperations(ctx)
-  // provider-card is an rc.1+/alpha extension and is intentionally absent
-  // from the rc.2 SlotMap. Use a structural view for cross-version compilation.
-  const modelSlots = ctx.slots as unknown as {
+  // Provider-card is optional. Use a structural view so a Host can add or
+  // remove the seat independently from the transport generation.
+  const modelSlots = slots as unknown as {
     inject(name: string, register: () => () => void): void
     register(
       options: {
@@ -47,7 +53,7 @@ export function apply(ctx: Context): void {
     }
     disposeModel()
     if (pluginSeat) {
-      pluginRegistration ??= ctx.slots.register({
+      pluginRegistration ??= slots.register({
         name: 'settings.plugin.item',
         key: 'llm-volcengine',
         inject: () => ({ operations }),
@@ -60,7 +66,7 @@ export function apply(ctx: Context): void {
     reconcile()
     return () => { modelSeat = false; disposeModel(); reconcile() }
   })
-  ctx.slots.inject('settings.plugin.item', () => {
+  slots.inject('settings.plugin.item', () => {
     pluginSeat = true
     reconcile()
     return () => { pluginSeat = false; disposePlugin(); reconcile() }

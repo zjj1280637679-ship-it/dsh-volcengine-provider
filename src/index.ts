@@ -1,4 +1,5 @@
 export * from './domain.js'
+export * from './host-compat.js'
 export * from './media.js'
 export * from './media-command.js'
 export * from './request-body.js'

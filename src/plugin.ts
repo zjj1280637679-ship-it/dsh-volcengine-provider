@@ -19,6 +19,7 @@ import type { ResolveMediaBytes } from './chat/serialize.js'
 import type { VerbatimAttachmentRefLike } from './media.js'
 import { registerMediaCommand } from './media-command.js'
 import { installCompatibleSettingsSection } from './settings-compat.js'
+import { inspectLlmHost } from './host-compat.js'
 
 export { Config } from './config.js'
 export const name = SETTINGS_NS
@@ -95,6 +96,26 @@ export function modelDiscoverySignal(
 
 /** Register the three configurable routes using the host's settings and credential seams. */
 export function apply(ctx: Context, config: Config = {}): void {
+  const capabilities = inspectLlmHost(ctx.get('llm'))
+  if (!capabilities.core) {
+    const missing = capabilities.missing.filter(name => name === 'registerAdapter' || name === 'listProviders')
+    ctx.logger.warn(
+      'dsh-volcengine-provider: disabled because the Host LLM service lacks public capabilities: %s',
+      missing.join(', '),
+    )
+    return
+  }
+  if (!capabilities.directory) {
+    ctx.logger.warn(
+      'dsh-volcengine-provider: Host provider-directory capabilities are unavailable; statically configured routes remain usable',
+    )
+  }
+  if (!capabilities.discovery) {
+    ctx.logger.warn(
+      'dsh-volcengine-provider: Host model-discovery registration is unavailable; manual model configuration remains usable',
+    )
+  }
+
   const entry = resolveConfig(config)
   let source: () => Config = () => entry
   let active = entry
@@ -105,8 +126,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const resolveKey = async (reference: string): Promise<string> => {
-    const credentials = ctx.get('credentials')
-    const raw = credentials === undefined
+    const credentials = ctx.get('credentials') as { resolve?: (ref: ReturnType<typeof credentialRef>) => Promise<{ value: string } | undefined> } | undefined
+    const raw = typeof credentials?.resolve !== 'function'
       ? launchEnvironmentOf(ctx).get(reference)?.value
       : (await credentials.resolve(credentialRef(reference)))?.value
     if (raw === undefined) throw new LlmError(`Set ${reference} in the provider card or launch environment.`, 'MISSING_CREDENTIAL')
@@ -128,7 +149,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   const validate = (value: Config): ResolvedConfig => {
     const next = resolveConfig(value)
     const live = new Set(ctx.llm.listProviders().map(route => route.id))
-    const declared = new Set(ctx.llm.listConfigurableProviders().map(route => route.provider))
+    const declared = capabilities.directory
+      ? new Set(ctx.llm.listConfigurableProviders().map(route => route.provider))
+      : new Set<string>()
     for (const [key, route] of Object.entries(next.routes)) {
       const provider = providerId(key)
       if (declared.has(provider) && !ownedDirectory.has(provider)
@@ -148,11 +171,15 @@ export function apply(ctx: Context, config: Config = {}): void {
     // for that call and restore both observations if a registration rejects it.
     active = next
     try {
-      if (directory !== undefined) directory.replace(entries)
-      else if (entries.length > 0) directory = ctx.llm.registerConfigurableProviders(entries)
+      if (capabilities.directory) {
+        if (directory !== undefined) directory.replace(entries)
+        else if (entries.length > 0) directory = ctx.llm.registerConfigurableProviders(entries)
+      }
       if (registered !== undefined) registered.replace(enabled)
       else if (enabled.length > 0) registered = ctx.llm.registerAdapter(enabled, adapter)
-      ownedDirectory = new Set(entries.map(route => route.provider))
+      ownedDirectory = capabilities.directory
+        ? new Set(entries.map(route => route.provider))
+        : new Set()
       ownedProviders = new Set(enabled)
     } catch (error) {
       active = previous
@@ -163,28 +190,35 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   sync()
 
-  ctx.llm.registerModelDiscovery(SETTINGS_NS, async (
-    draft: LlmModelDiscoveryRequest,
-    legacySignal?: AbortSignal,
-  ) => {
-    const signal = modelDiscoverySignal(draft, legacySignal)
-    if (draft.provider === undefined) throw new LlmError('Select a Volcengine route before refreshing its model feedback.', 'INVALID_REQUEST')
-    const route = routeFor(draft.provider)
-    const apiKey = draft.apiKey === undefined ? await resolveKey(route.apiKeyEnv) : draft.apiKey
-    const models = await discoverModels({
-      provider: draft.provider,
-      route: { kind: route.kind, baseUrl: draft.baseURL ?? route.baseURL, apiKeyEnv: route.apiKeyEnv },
-      apiKey, signal, feedback: adapter.feedback, headers: attributionHeaders(),
+  if (capabilities.discovery) {
+    ctx.llm.registerModelDiscovery(SETTINGS_NS, async (
+      draft: LlmModelDiscoveryRequest,
+      legacySignal?: AbortSignal,
+    ) => {
+      const signal = modelDiscoverySignal(draft, legacySignal)
+      if (draft.provider === undefined) throw new LlmError('Select a Volcengine route before refreshing its model feedback.', 'INVALID_REQUEST')
+      const route = routeFor(draft.provider)
+      const apiKey = draft.apiKey === undefined ? await resolveKey(route.apiKeyEnv) : draft.apiKey
+      const models = await discoverModels({
+        provider: draft.provider,
+        route: { kind: route.kind, baseUrl: draft.baseURL ?? route.baseURL, apiKeyEnv: route.apiKeyEnv },
+        apiKey, signal, feedback: adapter.feedback, headers: attributionHeaders(),
+      })
+      // Discovery is advisory. Configuration writes belong to the settings UI.
+      return models.map(model => ({ id: model.id, name: model.name }))
     })
-    // Discovery is advisory. Configuration writes belong to the settings UI.
-    return models.map(model => ({ id: model.id, name: model.name }))
-  })
+  }
 
   ctx.inject(['settings'], settingsCtx => {
-    installCompatibleSettingsSection(ctx, settingsCtx, SETTINGS_NS, Config, entry, {
+    const installed = installCompatibleSettingsSection(ctx, settingsCtx, SETTINGS_NS, Config, entry, {
       setSource: current => { source = current },
       onChange: sync,
       validate: value => { validate(value) },
     })
+    if (!installed) {
+      ctx.logger.warn(
+        'dsh-volcengine-provider: Host settings attachment capabilities are unavailable; static profile configuration remains active',
+      )
+    }
   })
 }

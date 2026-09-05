@@ -95,6 +95,52 @@ describe('version-neutral card operations', () => {
     expect(set).toHaveBeenCalledWith({ ref: 'ARK_KEY', value: 'test-value' })
   })
 
+  it('accepts an additive response envelope on the namespaced transport', async () => {
+    const ctx = context()
+    const view = description().namespaces[0]!
+    ctx.provide('remote', {
+      settings: {
+        describe: async () => ({ requestId: 'future', result: { ok: true, value: description() } }),
+        mutate: async () => ({ requestId: 'future', result: { ok: true, value: view } }),
+      },
+      credentials: {
+        describe: async () => ({ result: { ok: true, value: {
+          credentials: { ARK_KEY: { configured: true, writable: true } },
+        } } }),
+        set: async () => ({ requestId: 'future', result: { ok: true, value: {} } }),
+      },
+    } as never)
+
+    const operations = createCardOperations(ctx)
+    await expect(operations.read()).resolves.toEqual(description())
+    await expect(operations.describeCredential('ARK_KEY')).resolves.toMatchObject({ configured: true })
+    await expect(operations.saveSettings('llm-volcengine', [], 4)).resolves.toEqual(view)
+    await expect(operations.saveCredential('ARK_KEY', 'test-value')).resolves.toBeUndefined()
+  })
+
+  it('accepts direct operation results on the connection transport', async () => {
+    const ctx = context()
+    const view = description().namespaces[0]!
+    ctx.provide('connection', { api: {
+      settings: {
+        describe: async () => ({ ok: true, value: description() }),
+        mutate: async () => ({ ok: true, value: view }),
+      },
+      credentials: {
+        describe: async () => ({ ok: true, value: {
+          ARK_KEY: { configured: false, writable: true },
+        } }),
+        set: async () => ({ ok: true, value: {} }),
+      },
+    } } as never)
+
+    const operations = createCardOperations(ctx)
+    await expect(operations.read()).resolves.toEqual(description())
+    await expect(operations.describeCredential('ARK_KEY')).resolves.toMatchObject({ configured: false })
+    await expect(operations.saveSettings('llm-volcengine', [], 4)).resolves.toEqual(view)
+    await expect(operations.saveCredential('ARK_KEY', 'test-value')).resolves.toBeUndefined()
+  })
+
   it.each(['settings/conflict', 'settings-conflict'] as const)(
     'normalizes the %s settings conflict code', async (code) => {
     const ctx = context()

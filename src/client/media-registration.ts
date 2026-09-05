@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { MediaDock } from './MediaDock.js'
 import { createMediaOperations } from './media-operations.js'
 import type { MediaServices } from './media-operations.js'
+import { hasSlotRegistry } from '../host-compat.js'
 
 /** Optional new public services are detected structurally, keeping the older image-only host usable. */
 export function registerMediaDock(ctx: Context): void {
@@ -29,11 +30,13 @@ export function registerMediaDock(ctx: Context): void {
       for (const listener of [...generationListeners]) listener()
     }) as never)
     // The slot is a published list/session face. Keep its optional contract out of baseline type dependencies.
-    const slots = scope.slots as unknown as {
+    const slots = scope.get('slots')
+    if (!hasSlotRegistry(slots)) return
+    const mediaSlots = slots as unknown as {
       inject(name: string, register: () => () => void): void
       register(options: { name: string; id: string; order: number; inject(id: string): object }, component: typeof MediaDock): () => void
     }
-    slots.inject('conversation.input.dock', () => slots.register({
+    mediaSlots.inject('conversation.input.dock', () => mediaSlots.register({
       name: 'conversation.input.dock', id: 'volcengine-media', order: 30,
       inject: sessionId => ({ operations: createMediaOperations(sessionId, {
         upload, commands, llm, directory: directories.directoryFor(sessionId),

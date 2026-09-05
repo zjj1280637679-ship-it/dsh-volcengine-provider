@@ -14,11 +14,22 @@ interface SettingsScopeLike<T> {
 }
 
 interface SettingsProviderLike {
-  register<T>(ns: string, schema: z<T>, options?: { base?: Partial<T>; validate?: (value: T) => void }): SettingsScopeLike<T>
+  register?<T>(ns: string, schema: z<T>, options?: { base?: Partial<T>; validate?: (value: T) => void }): SettingsScopeLike<T>
   installSection?<T>(owner: Context, ns: string, schema: z<T>, entry: T, hooks: SettingsSectionHooks<T>): void
 }
 
 type SettingsContextLike = Omit<Context, 'settings'> & { settings: SettingsProviderLike }
+
+export type SettingsSectionMode = 'install-section' | 'register-watch' | 'unavailable'
+
+/** Select a settings attachment seam structurally, without consulting a Host version. */
+export function settingsSectionMode(value: unknown): SettingsSectionMode {
+  if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return 'unavailable'
+  const settings = value as SettingsProviderLike
+  if (typeof settings.installSection === 'function') return 'install-section'
+  if (typeof settings.register === 'function') return 'register-watch'
+  return 'unavailable'
+}
 
 // Cordis publishes FiberState as a const enum, so no runtime enum object exists
 // for plugins to import. These are the stable DISPOSED/UNLOADING values used by
@@ -47,14 +58,16 @@ export function installCompatibleSettingsSection<T>(
   schema: z<T>,
   entry: T,
   hooks: SettingsSectionHooks<T>,
-): void {
+): boolean {
   const settings = settingsCtx.settings
-  if (typeof settings.installSection === 'function') {
-    settings.installSection(owner, ns, schema, entry, hooks)
-    return
+  const mode = settingsSectionMode(settings)
+  if (mode === 'install-section') {
+    settings.installSection!(owner, ns, schema, entry, hooks)
+    return true
   }
+  if (mode === 'unavailable') return false
 
-  const scope = settings.register(ns, schema, {
+  const scope = settings.register!(ns, schema, {
     base: entry,
     ...(hooks.validate === undefined ? {} : { validate: hooks.validate }),
   })
@@ -69,4 +82,5 @@ export function installCompatibleSettingsSection<T>(
     if (ownerIsUnloading(owner)) return
     hooks.onChange()
   })
+  return true
 }

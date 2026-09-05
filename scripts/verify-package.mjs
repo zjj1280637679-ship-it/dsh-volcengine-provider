@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -30,14 +30,32 @@ try {
     assert(!/^(src|tests|node_modules)\//.test(file.path), `Development residue in package: ${file.path}`)
     assert(!/(^|\/)\.env(?:\.|$)/.test(file.path), 'Environment file in package')
   }
-  const extracted = path.join(temporary, 'extracted')
-  await mkdir(extracted)
-  execFileSync('tar', ['-xf', path.join(temporary, packed.filename), '-C', extracted])
-  const packageRoot = path.join(extracted, 'package')
-  // Reuse the verified host peer set; this smoke requires no network or credentials.
-  await symlink(path.resolve('node_modules'), path.join(packageRoot, 'node_modules'), 'dir')
+  // Recreate the profile layout used by DSH: the plugin has no private copy of
+  // Host packages, and resolves them through profiles/node_modules maintained
+  // from the active DSH installation's dependency closure.
+  const profileModules = path.join(temporary, 'profiles', 'web', 'node_modules')
+  await mkdir(profileModules, { recursive: true })
+  execFileSync('tar', ['-xf', path.join(temporary, packed.filename), '-C', profileModules])
+  const packageRoot = path.join(profileModules, 'dsh-volcengine-provider')
+  await rename(path.join(profileModules, 'package'), packageRoot)
+  await symlink(path.resolve('node_modules'), path.join(temporary, 'profiles', 'node_modules'), 'dir')
   const require = createRequire(path.join(packageRoot, 'package.json'))
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
+  assert.deepEqual(
+    Object.keys(manifest.peerDependencies ?? {}).filter(name => name.startsWith('@deepseek-ai/dsh-')),
+    [],
+    'Harness prerelease packages are Host capabilities, not plugin peer-version locks',
+  )
+  const serverBundle = await readFile(path.join(packageRoot, 'dist', 'index.js'), 'utf8')
+  for (const dependency of [
+    '@deepseek-ai/dsh-llm',
+    '@deepseek-ai/dsh-credentials',
+    '@deepseek-ai/dsh-launch-environment',
+    '@deepseek-ai/schemastery',
+  ]) {
+    assert(serverBundle.includes(`from \"${dependency}\"`) || serverBundle.includes(`from '${dependency}'`),
+      `Host dependency must remain external in the server bundle: ${dependency}`)
+  }
   const plugin = await import(pathToFileURL(require.resolve(manifest.name)).href)
   assert.equal(plugin.name, 'llm-volcengine')
   assert.equal(typeof plugin.apply, 'function')

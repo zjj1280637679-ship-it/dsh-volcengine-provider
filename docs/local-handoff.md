@@ -17,7 +17,7 @@ pnpm run test:package
 npm pack
 ```
 
-完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.3` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.3.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务。
+完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.4` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.4.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务。
 
 ## 2. 确认宿主，再安装启用
 
@@ -33,7 +33,7 @@ Coding Plan 接入条件以[火山方舟 DeepSeek Harness 专项文档](https://
 
 ```powershell
 dsh --version
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.3.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.4.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
