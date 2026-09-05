@@ -11,6 +11,7 @@ import { discoverModels } from './chat/discovery.js'
 import type { ResolveMediaBytes } from './chat/serialize.js'
 import type { VerbatimAttachmentRefLike } from './media.js'
 import { registerMediaCommand } from './media-command.js'
+import { installCompatibleSettingsSection } from './settings-compat.js'
 
 export { Config } from './config.js'
 export const name = SETTINGS_NS
@@ -161,7 +162,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   })
 
   ctx.inject(['settings'], settingsCtx => {
-    settingsCtx.settings.installSection(ctx, SETTINGS_NS, Config, entry, {
+    installCompatibleSettingsSection(ctx, settingsCtx, SETTINGS_NS, Config, entry, {
       setSource: current => { source = current },
       onChange: sync,
       validate: value => { validate(value) },

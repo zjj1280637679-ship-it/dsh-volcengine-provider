@@ -24,12 +24,15 @@ async function server(): Promise<FakeArk> {
   return fake
 }
 
-async function boot(config: Config = {}, options: { dynamic?: boolean; key?: string } = {}) {
+async function boot(config: Config = {}, options: { dynamic?: boolean; key?: string; legacySettings?: boolean } = {}) {
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(LlmRuntime)
   if (options.dynamic !== false) {
     await ctx.plugin(MemorySettings)
+    if (options.legacySettings === true) {
+      Object.defineProperty(ctx.settings, 'installSection', { configurable: true, value: undefined })
+    }
     await ctx.plugin(MemoryCredentials, options.key ? { [KEY]: options.key } : {})
   }
   const plugin = ctx.plugin(VolcenginePlugin, config)
@@ -49,6 +52,21 @@ function standard(baseURL: string): Config {
 }
 
 describe('Volcengine plugin in the public Harness runtime', () => {
+  it('uses the Harness 0.1.1 public settings seams when installSection is not a provider method', async () => {
+    const fake = await server()
+    enqueueCompletion(fake, 'legacy settings host')
+    const { ctx } = await boot(standard(fake.baseUrl), { key: 'legacy-key', legacySettings: true })
+
+    expect(ctx.settings.describe().map(descriptor => descriptor.ns)).toEqual([SETTINGS_NS])
+    expect((await prompt(ctx)).at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
+    expect(fake.requests[0]!.headers.authorization).toBe('Bearer legacy-key')
+
+    await ctx.settings.update(SETTINGS_NS, { routes: { standard: { models: [{ id: 'legacy-edited' }] } } })
+    await expect(ctx.llm.listModels('volcengine-standard')).resolves.toEqual([
+      expect.objectContaining({ id: 'legacy-edited' }),
+    ])
+  })
+
   it('registers three editable cards and reads manual model catalogs without credentials or network', async () => {
     const fake = await server()
     const routes = defaultRoutes()

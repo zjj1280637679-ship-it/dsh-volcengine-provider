@@ -64,7 +64,9 @@ try {
   })
   assert.equal(typeof browser.apply, 'function')
   assert(browser.inject.includes('slots'))
-  assert(browser.inject.includes('remote.settings'))
+  assert(browser.inject.includes('remote'))
+  assert(!browser.inject.includes('remote.settings'))
+  assert(!browser.inject.includes('remote.credentials'))
   assert.equal((await readdir(temporary)).filter(name => name.endsWith('.tgz')).length, 1)
   process.stdout.write(`Package verified: ${packed.filename}; bundle metadata, host entry, browser ModuleLoader factory, declarations, and clean contents.\n`)
 } finally {

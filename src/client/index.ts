@@ -6,7 +6,12 @@ import { VolcengineCard } from './Card.js'
 import { createCardOperations } from './operations.js'
 import { registerMediaDock } from './media-registration.js'
 
-export const inject = ['slots', 'remote', 'remote.settings', 'remote.credentials']
+// Older published Harness clients expose the assembled Remote as one service;
+// newer clients additionally publish per-namespace dependency names. The card
+// calls namespace methods lazily, so requiring the common assembled service is
+// sufficient and prevents a compatible older host from leaving this plugin in
+// a permanent pending state.
+export const inject = ['slots', 'remote']
 
 /** One namespace registration serves all present and future route cards. */
 export function apply(ctx: Context): void {

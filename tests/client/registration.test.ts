@@ -38,8 +38,6 @@ it('registers after the real Models slot appears, restores after redeclaration a
     const SlotRegistry = await registry()
     await ctx.plugin(SlotRegistry).await()
     ctx.provide('remote', {})
-    ctx.provide('remote.settings', {})
-    ctx.provide('remote.credentials', {})
     const mounted = ctx.plugin(plugin)
     await mounted.await()
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(0)
@@ -66,8 +64,6 @@ it('adds a separate media dock only when the optional public services exist and 
     const SlotRegistry = await registry()
     await ctx.plugin(SlotRegistry).await()
     ctx.provide('remote', {})
-    ctx.provide('remote.settings', {})
-    ctx.provide('remote.credentials', {})
     const mounted = ctx.plugin(plugin)
     await mounted.await()
     const declare = () => ctx.slots.register({

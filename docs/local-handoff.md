@@ -17,13 +17,13 @@ pnpm run test:package
 npm pack
 ```
 
-完整代码目前在 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.1` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.1.tgz`。复验不需要方舟密钥，不调用真实方舟服务。
+完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.2` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.2.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务。
 
 ## 2. 确认宿主，再安装启用
 
 下列命令以电脑上已经安装、可运行的 Harness CLI `dsh` 为前提。
 
-原始媒体入口要求宿主提供公共文件上传、命令及附件 `readFileStream` 接口。已检查的源码基线是 Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`0.1.3-alpha.1`）；此前验证用的 npm `0.1.2-rc.1` 缺少这些原文件接口，不能据此验收媒体面板。插件按公共能力检测挂载，不按精确版本锁定；安装更高版本也不等于已通过兼容验收。
+原始媒体入口要求宿主提供公共文件上传、命令及附件 `readFileStream` 接口。已检查的源码基线是 Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`0.1.3-alpha.1`）；此前验证用的 npm `0.1.2-rc.1` 和兼容安装目标 `0.1.1-rc.2` 缺少这些原文件接口，不能据此验收媒体面板。`0.1.1-rc.2` 还没有新版 Models 扩展卡位，因此使用宿主自带的通用供应商行；插件按公共能力检测挂载，不按精确版本锁定，安装更高版本也不等于已通过兼容验收。
 
 需要从源码准备宿主时，按该版本的 [官方源码运行说明](https://github.com/deepseek-ai/deepseek-harness/blob/d347e703908d0406b7a7ef80e3a0e594d86b2215/README.zh.md) 构建。在宿主源码目录中执行安装／启动命令时用 `pnpm dsh`，并把下面插件包与 patch 的相对路径改为本机绝对路径。
 
@@ -31,7 +31,7 @@ npm pack
 
 ```powershell
 dsh --version
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.1.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.2.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
