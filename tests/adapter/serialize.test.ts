@@ -86,9 +86,9 @@ describe('step 3 serializer', () => {
       ['sha256:audio', audioBytes],
     ])
     const config = createDefaultModelConfig()
-    config.modalities.image.override = 'force_enable'
-    config.modalities.video.override = 'force_enable'
-    config.modalities.audio.override = 'force_enable'
+    config.modalities.image = { override: 'force_enable' }
+    config.modalities.video = { override: 'force_enable' }
+    config.modalities.audio = { override: 'force_enable' }
 
     const body = await serializeChatRequest(
       options([user([
@@ -141,7 +141,7 @@ describe('step 3 serializer', () => {
 
   it('honors explicit local disable without consulting supplier feedback', async () => {
     const config = createDefaultModelConfig()
-    config.modalities.video.override = 'force_disable'
+    config.modalities.video = { override: 'force_disable' }
     await expect(serializeChatRequest(
       options([user([{
         type: 'volcengine-video',

@@ -98,9 +98,10 @@ async function boot(options: { imageOnly?: boolean; modalities?: ModelCardConfig
   else await ctx.plugin(DiskAttachments, { root })
   await ctx.plugin(VolcenginePlugin, { routes: { standard: {
     kind: 'standard', baseURL: `${fake.baseUrl}/api/v3`, apiKeyEnv: 'TEST_VOLCENGINE_MEDIA_KEY',
-    models: [{ id: 'unknown-future-model', modalities: options.modalities ?? {
-      image: 'force_enable', video: 'force_enable', audio: 'force_enable',
-    } }],
+    models: [{
+      id: 'unknown-future-model',
+      ...(options.modalities === undefined ? {} : { modalities: options.modalities }),
+    }],
   } } })
   return { root, fake, ctx, attachments: ctx.get('attachments') as unknown as DiskAttachments }
 }
@@ -152,7 +153,7 @@ function stereoWav(): Buffer {
 }
 
 describe('persisted media through the real Harness runtime and Ark HTTP boundary', () => {
-  it('preserves mixed-content order and the exact original PNG, MP4 and MP3 bytes', async () => {
+  it('does not auto-fill modality settings and preserves mixed original media bytes', async () => {
     const harness = await boot()
     const image = await persistFile(harness.root, 'original-alpha.png', PNG)
     const video = await persistFile(harness.root, 'one-frame.mp4', MP4)
@@ -225,6 +226,29 @@ describe('persisted media through the real Harness runtime and Ark HTTP boundary
     const sent = (parts(harness.fake)[0] as Extract<WireUserPart, { type: 'input_audio' }>).input_audio
     expect(sent.format).toBe(block.format)
     expect(hash(Buffer.from(sent.data, 'base64'))).toBe(hash(bytes))
+  })
+
+  it('does not auto-disable media after a provider rejection', async () => {
+    const harness = await boot()
+    const attachment = await persistFile(harness.root, 'retry.mp3', MP3)
+    const content: ContentBlock[] = [{
+      type: 'volcengine-audio', attachment, mediaType: 'audio/mpeg',
+    }]
+    harness.fake.enqueueResponse({
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ error: { code: 'audio_not_supported', message: 'controlled rejection' } }),
+    })
+
+    expect((await dispatch(harness, content)).at(-1)).toMatchObject({
+      type: 'finish', reason: { kind: 'error' },
+    })
+    enqueueCompletion(harness.fake, 'second attempt reached Ark')
+    expect((await dispatch(harness, content)).at(-1)).toEqual({
+      type: 'finish', reason: { kind: 'stop' },
+    })
+    expect(harness.fake.requests).toHaveLength(2)
+    expect(harness.attachments.reads).toEqual([attachment.attachmentId, attachment.attachmentId])
   })
 
   it('reports a missing verbatim-file reader without normalizing the image or sending a text substitute', async () => {

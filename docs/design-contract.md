@@ -90,7 +90,9 @@ Observations != Config
 - `force_enable`
 - `force_disable`
 
-关键不变量：`reported_support` 不参与硬阻断。
+未设置字段与 `inherit` 等价，含义是**未知**，不是“使用插件猜测的默认能力”。`inherit` 和 `force_enable` 都允许请求继续到适配器；只有用户明确设置 `force_disable` 才能因模态策略在本地阻断。`force_enable` 用于记录用户的明确意图，不授权程序据此反向补齐其他模态。
+
+关键不变量：`reported_support` 和 Runtime Observations 都不参与硬阻断，也不允许写回模态策略。插件不得依据模型 ID、供应商反馈、历史成功／失败或浏览器文件类型自动填写、开启或关闭任何模态。
 
 即使：
 
@@ -100,6 +102,8 @@ policy = force_enable
 ```
 
 请求仍必须发送。
+
+Provider 向 Harness 发布模型时不提供封闭的 `inputModalities` 列表。缺省字段表示能力未知；发布一个有限列表会让宿主把未列出的模态当作不可用，在请求到达 Provider 之前错误削减用户的尝试空间。
 
 ## 5. 媒体默认 passthrough
 
@@ -159,15 +163,17 @@ Fake Ark 测试应通过 SHA-256 验证解码/上传后的媒体字节与输入�
 至少覆盖：
 
 1. 未出现在模型目录中的 model id 仍能发送；
-2. Feedback=image unsupported + force_enable -> 图片仍发送；
-3. Feedback=video unsupported + force_enable -> 视频仍发送；
-4. Feedback=audio unsupported + force_enable -> 音频仍发送；
-5. Feedback=unavailable -> 用户明确调用仍能到达 Fake Ark；
-6. 未知 custom body 字段不被删除；
-7. 嵌套未知 JSON 不被删除；
-8. 媒体字节不被修改；
-9. 不发生隐式跨 Route fallback；
-10. 用户 force_disable 的模态会被本地拒绝。
+2. 图片／视频／音频未设置或为 inherit 时仍能到达 Fake Ark；
+3. Feedback=image unsupported + force_enable -> 图片仍发送；
+4. Feedback=video unsupported + force_enable -> 视频仍发送；
+5. Feedback=audio unsupported + force_enable -> 音频仍发送；
+6. Feedback=unavailable -> 用户明确调用仍能到达 Fake Ark；
+7. 模型解析结果不发布封闭的 `inputModalities`；
+8. 未知 custom body 字段不被删除；
+9. 嵌套未知 JSON 不被删除；
+10. 媒体字节不被修改；
+11. 不发生隐式跨 Route fallback；
+12. 用户 force_disable 的模态会被本地拒绝。
 
 ## 10. v0.1 暂不负责
 

@@ -71,6 +71,8 @@ it('retains files and text on handler failure and cancellation; unmount aborts i
   await act(async () => root.render(createElement(MediaDock, { operations: ops, session })))
   const original = new File(['PNG'], 'keep.png', { type: 'image/png' })
   await files(original)
+  expect((container.querySelector('[aria-label="文件 1 MIME 类型"]') as HTMLInputElement).value).toBe('')
+  await change('文件 1 MIME 类型', 'image/png')
   await change('媒体问题', '保留这个问题')
   await act(async () => button('发送媒体').click())
   expect(container.textContent).toContain('keep.png')

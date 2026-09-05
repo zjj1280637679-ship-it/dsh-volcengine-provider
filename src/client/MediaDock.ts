@@ -88,13 +88,15 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
   return h('details', { style: { margin: '8px 0', fontSize: 13 }, 'aria-label': '火山方舟原始媒体' },
     h('summary', { style: { cursor: 'pointer' } }, '方舟原始媒体'),
     h('div', { style: { display: 'grid', gap: 10, padding: '10px 0' } },
-      h('p', { style: { margin: 0 } }, '图片、音频和视频按原文件上传。请确认每个文件的 MIME 类型，并在模型配置中开启相应输入。'),
+      h('p', { style: { margin: 0 } }, '图片、音频和视频按原文件上传。请手动填写每个文件的 MIME 类型；插件不会自动填写或修改模型模态。'),
       h('p', { style: { margin: 0 } }, selection.current === null ? '尚未选择模型。' : `当前模型：${provider} / ${model}`),
       h('input', { ref: picker, type: 'file', multiple: true, hidden: true, 'aria-label': '选择原始媒体文件', disabled: busy || !ready,
         onChange: (event: { target: HTMLInputElement }) => {
           const selected = Array.from(event.target.files ?? [])
           setFiles(current => [...current, ...selected.map(file => ({ file,
-            mediaType: /^(image|audio|video)\//iu.test(file.type) ? file.type : '' }))])
+            // Browser-provided File.type is advice, not a user declaration.
+            // Keep this blank so the plugin never auto-fills media input.
+            mediaType: '' }))])
           event.target.value = ''
           setNotice('')
         } }),

@@ -8,7 +8,7 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.1` 开�
 
 在 Harness 的 Models 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
 
-本次选定的 lite／flash 模型另有可直接使用的 [Coding Plan 最小媒体配置](examples/coding-plan-media.yml)：lite 图片、flash 图片与视频开启，其余仍可在 UI 编辑。
+本次选定的 lite／flash 模型另有 [Coding Plan 最小媒体配置](examples/coding-plan-media.yml)。示例只填写用户选择的模型 ID，刻意不预填任何模态；未设置表示未知且允许尝试，不代表插件判断模型支持或不支持某种输入。
 
 | 通道 | 默认 API 地址 | 默认密钥引用 | Harness Provider ID |
 | --- | --- | --- | --- |
@@ -20,13 +20,17 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.1` 开�
 
 每个模型的高级配置包括：
 
-- 文本、图片、视频、音频三态开关：继承、强制开启、强制关闭；继承时文本开启，其余关闭。
+- 文本、图片、视频、音频三态开关：未设置（继承）、强制开启、强制关闭。未设置表示能力未知，不自动填入能力，也不阻止请求；只有用户明确选择强制关闭才在本地阻断。
 - 自定义请求体 JSON：`merge` 合并、`patch` 以 `null` 删除字段、`raw` 完整替换；未知 JSON 字段保留。
 - 可选显示名称、上下文容量和输出上限；不根据供应商反馈自动填写容量。
+
+插件不向 Harness 发布封闭的 `inputModalities` 列表；字段缺省表示未知，避免宿主在请求到达适配器前把未列出的媒体视为禁用。供应商反馈和运行时成功／拒绝都只作为证据，不会新增、开启、关闭或改写模型卡设置。
 
 思考模式在模型的自定义请求体中设置，不新增对话界面的统一思考开关。通道和模型中已有的普通未知配置字段会保留，便于继续增加 UI 控件。请求体通过 JSON 文本保存，避免宿主设置对象合并改写特殊字段；详见 [第四步说明](docs/step4-configuration.md)。
 
 ## 本地构建与安装
+
+在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 获取完整开发分支、安装并完成最小验收。
 
 需要 Node.js `^22.19.0 || >=24.0.0`、本仓库声明的 pnpm，以及已安装的 Harness CLI。
 
@@ -54,9 +58,9 @@ dsh --profile web --patch ./examples/cordis.yml
 - 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。完整 Harness Web 安装后的人工验收仍需补齐。
 - 真实媒体测试中，flash 图片／视频通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。四项请求的媒体字节均保持一致，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
 
-媒体入口增加 `/ark-media video/mp4,audio/mpeg -- 提问`：先选择方舟模型并开启对应模态，附加文件，再按附件顺序填写 MIME。仅在宿主提供 commands 与原文件 `readFileStream` 时注册；采用能力检测，不按精确版本锁定。
+媒体入口增加 `/ark-media video/mp4,audio/mpeg -- 提问`：先选择方舟模型，附加文件，再由用户按附件顺序填写 MIME。模态保持未设置即可尝试；只有模型卡中被用户明确强制关闭的模态会被阻断。入口仅在宿主提供 commands 与原文件 `readFileStream` 时注册；采用能力检测，不按精确版本锁定。
 
-在具备公共文件上传服务的 Harness 中，会话输入区新增**“方舟原始媒体”**：添加原图／音频／视频、确认可编辑 MIME 和可选音频格式即可发送。上传失败或取消保留当前草稿，支持复用已完成上传；不改变主输入草稿或自动切模型。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md)。
+在具备公共文件上传服务的 Harness 中，会话输入区新增**“方舟原始媒体”**：添加原图／音频／视频后，必须由用户填写 MIME；浏览器的 `File.type` 不会自动带入。音频格式可由用户另行填写，也可在发送时从用户填写的 MIME 推导协议所需格式；这两种方式都不会反写模型配置或文件草稿。上传失败或取消保留当前草稿，支持复用已完成上传；不改变主输入草稿或自动切模型。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md)。
 
 原文件图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。普通图片附件可能已被 Harness 规范化，严格原图应使用上述原始媒体入口。npm `0.1.2-rc.1` 缺少原文件接口，不挂载新面板；固定 `0.1.3-alpha.1` 源码具备公共接口，插件按能力检测启用。完整 Harness Web 端到端仍未验收。协议与历史兼容细节见 [第五步媒体输入](docs/step5-media-input.md)。
 
@@ -64,4 +68,4 @@ dsh --profile web --patch ./examples/cordis.yml
 
 源码设计基线为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)；本地可安装组件验证使用 `0.1.2-rc.1`。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
 
-设计资料：[自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md) · [第五步媒体输入](docs/step5-media-input.md)
+设计资料：[第一阶段基本闭环](docs/phase1-basic-loop-2026-09-05.md) · [自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md) · [第五步媒体输入](docs/step5-media-input.md)

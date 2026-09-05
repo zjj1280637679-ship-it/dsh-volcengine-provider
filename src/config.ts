@@ -134,7 +134,8 @@ export function parseModelBody(body: ModelCardConfig['customBody']): RequestBody
 export function modelPolicy(model?: ModelCardConfig): ModelConfig {
   const config = createDefaultModelConfig()
   for (const modality of MODALITIES) {
-    config.modalities[modality].override = model?.modalities?.[modality] ?? 'inherit'
+    const override = model?.modalities?.[modality]
+    if (override !== undefined) config.modalities[modality] = { override }
   }
   return config
 }

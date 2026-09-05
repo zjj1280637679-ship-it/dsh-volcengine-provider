@@ -58,7 +58,7 @@ export async function runMediaProbe({ apiKey, fetchImpl = fetch }) {
     const result = { model: test.model, modality: test.modality, fixture: test.file, bytes: fixture.bytes, sourceSha256: fixture.sha256, wireSha256: null, bytesPreserved: false, text: '', reasoningCharacters: 0, finish: null, completed: false, semanticMatch: false, ok: false }
     report.cases.push(result)
     const config = createDefaultModelConfig()
-    config.modalities[test.modality].enabled = true
+    config.modalities[test.modality] = { override: 'force_enable' }
     let attempts = 0
     const adapter = new VolcengineChatAdapter({
       resolveConnection: () => ({ route, apiKey: key, modelConfig: config }),

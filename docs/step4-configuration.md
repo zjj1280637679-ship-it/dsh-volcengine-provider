@@ -15,11 +15,13 @@
 | 通道 | `models` | 手动模型卡数组；无需先拉取供应商模型列表 |
 | 模型 | `id` | 必填；可填写模型 ID 或推理接入点 ID，不使用白名单 |
 | 模型 | `name` | 可选显示名称 |
-| 模型 | `modalities` | 按 `text`、`image`、`video`、`audio` 独立设置三态 |
+| 模型 | `modalities` | 可选；按 `text`、`image`、`video`、`audio` 独立记录用户设置的三态 |
 | 模型 | `customBody`、`customBodyMode` | 自定义 JSON 文本（兼容对象）及 `merge` / `patch` / `raw` 模式 |
 | 模型 | `contextWindow`、`maxTokens` | 可选正整数；分别声明上下文容量、请求默认输出上限 |
 
-`inherit` 继承插件的静态默认值：文本开启，图片／视频／音频关闭；`force_enable` 和 `force_disable` 覆盖该默认值。供应商的 supported／unsupported／unknown 反馈均不参与此计算。留空上下文容量时插件不向 Harness 声明容量；留空输出上限时插件不额外设置 `max_tokens`，调用方仍可提供它。
+模态字段缺省或为 `inherit` 时表示能力未知，插件不自动填写，也不阻止该模态请求；`force_enable` 记录用户明确开启，`force_disable` 是唯一会在本地阻断该模态的设置。供应商的 supported／unsupported／unknown 反馈和运行时成功／拒绝均不参与此计算，也不能写回模型卡。留空上下文容量时插件不向 Harness 声明容量；留空输出上限时插件不额外设置 `max_tokens`，调用方仍可提供它。
+
+模型目录与 `resolveModel()` 不发布封闭的 Harness `inputModalities` 列表。省略该字段表示未知，避免宿主把一个有限列表解释为能力上限并在适配器收到请求前阻断图片、视频或音频。卡片首次添加模型、重新载入和保存时也不得根据模型名称、目录反馈或历史调用结果补齐 `modalities`。
 
 通道 key 使用小写字母开头的小写字母、数字和连字符，便于形成稳定 Provider ID。`baseURL` 可自定义，但应为不含嵌入凭据、查询参数或 fragment 的 HTTP(S) 根地址。模型 ID 不得为空或在同一通道重复。
 
@@ -88,7 +90,7 @@ customBody: |-
 
 此例只说明透传形式，不表示所有方舟模型支持这些字段。UI 将请求体保存为 JSON 文本，在适配器构造请求时才解析。这样连 `__proto__` 等合法未知 JSON 键也能穿过宿主 settings 的对象合并过程。既有程序传入的对象仍兼容；若需要保留此类特殊键，应使用文本形式。普通未知通道／模型字段也会保留，但宿主对象合并本身对特殊键的限制仍存在，不据此宣称任意配置对象完全无损。
 
-自定义请求体在常规消息序列化之后应用，所以 `raw` 也不会跳过输入消息本身的内容块校验和附件读取。卡片校验 JSON 对象，不自动从供应商反馈推导请求参数。
+自定义请求体在常规消息序列化之后应用，所以 `raw` 也不会跳过输入消息本身的内容块校验和附件读取。卡片校验 JSON 对象，不自动从供应商反馈或运行时结果推导请求参数。
 
 ## UI 扩展协议
 
@@ -102,7 +104,7 @@ customBody: |-
 
 - 新的供应商或模型参数放在高级配置；基本填写流程仍围绕通道、密钥和模型 ID。
 - 修改通道只提交实际编辑的路径；模型数组整体更新时从原模型对象复制，保留尚未认识的字段。
-- 供应商 Feedback 与用户 Config 分开保存；未来只读反馈查看器不能自行更改模态、容量或请求体。
+- 供应商 Feedback／Runtime Observations 与用户 Config 分开保存；未来只读查看器不能自行更改模态、容量或请求体。
 - 新通道通过 `routes` 数据及官方目录注册进入 UI，不修改 Harness 页面内部组件。
 
 ## 验证与尚未完成的链路
@@ -116,9 +118,9 @@ pnpm run test:package
 
 本地验证包括：三通道路径和凭据隔离、未知模型与自定义参数、媒体字节一致性、Chat 流翻译、公开 Cordis/LLM 运行时注册与热更新、Loader/Include 配置组合、卡片编辑和未知字段保存。宿主集成使用测试内存 settings／credentials 提供方；Loader 测试映射模块到源码；卡片测试使用 DOM 环境并验证官方 SlotRegistry 的注册／卸载。`test:package` 打包、解包并检查宿主导出、浏览器 ModuleLoader factory、类型声明和包内容，复用当前安装的 peer 依赖；这些验证不等于真实方舟或完整 Harness Web profile 启动验收。
 
-第四步仅具备媒体读取扩展；[第五步](step5-media-input.md)进一步添加显式 MIME 的 `/ark-media` 输入命令、原图文件块和正确的 Chat 音频编码。命令按 commands 与 `readFileStream` 公共能力存在与否注册；npm `0.1.2-rc.1` 仍缺少原文件接口。普通图片经 `readImage` 读取时可能已被宿主规范化，严格原图需官方 file upload 文件链。原字节透传的本地验证不能替代完整 Web 或真实媒体 API 验收。
+第四步仅具备媒体读取扩展；[第五步](step5-media-input.md)进一步添加显式 MIME 的 `/ark-media` 输入命令、原图文件块和正确的 Chat 音频编码。命令按 commands 与 `readFileStream` 公共能力存在与否注册；npm `0.1.2-rc.1` 仍缺少原文件接口。普通图片经 `readImage` 读取时可能已被宿主规范化，严格原图需官方 file upload 文件链。媒体模态未设置时仍允许尝试，只有用户明确 `force_disable` 才阻断。原字节透传的本地验证不能替代完整 Web 或真实媒体 API 验收。
 
-本次无真实 API 密钥，未发送真实方舟请求；套餐权限、模型 ID、媒体 wire 形式和服务实际行为仍待最小真实冒烟验证。当前保留 `private: true`，不进行 npm 发布或正式 Release。
+第四步完成时尚无真实 API 密钥，因此该阶段没有发送方舟请求。后续 Coding Plan 的文本与媒体冒烟结果分别见 [文本实测](live-coding-plan-2026-09-05.md) 和 [媒体实测](live-coding-plan-media-2026-09-05.md)；这些结果只覆盖当次账号、通道、模型别名和样本。当前保留 `private: true`，不进行 npm 发布或正式 Release。
 
 ## 资料依据
 

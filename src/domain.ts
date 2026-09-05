@@ -18,12 +18,12 @@ export interface ModelFeedback {
 }
 
 export interface ModalityConfig {
-  enabled: boolean
-  override: ModalityOverride
+  /** Undefined means unknown: it neither asserts support nor blocks an attempt. */
+  override?: ModalityOverride
 }
 
 export interface ModelConfig {
-  modalities: Record<Modality, ModalityConfig>
+  modalities: Partial<Record<Modality, ModalityConfig>>
   customBody?: Record<string, unknown>
 }
 
@@ -45,14 +45,7 @@ export interface ModelEntry {
 }
 
 export function createDefaultModelConfig(): ModelConfig {
-  return {
-    modalities: {
-      text: { enabled: true, override: 'inherit' },
-      image: { enabled: false, override: 'inherit' },
-      video: { enabled: false, override: 'inherit' },
-      audio: { enabled: false, override: 'inherit' },
-    },
-  }
+  return { modalities: {} }
 }
 
 /**
@@ -67,7 +60,8 @@ export function isModalityEnabled(
 ): boolean {
   const setting = config.modalities[modality]
 
-  if (setting.override === 'force_enable') return true
-  if (setting.override === 'force_disable') return false
-  return setting.enabled
+  if (setting?.override === 'force_enable') return true
+  if (setting?.override === 'force_disable') return false
+  // Unknown is permissive for dispatch only. It is not a capability claim.
+  return true
 }

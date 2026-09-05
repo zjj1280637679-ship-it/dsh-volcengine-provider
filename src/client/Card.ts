@@ -1,4 +1,4 @@
-import { createElement as h, useEffect, useState } from 'react'
+import { createElement as h, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
@@ -88,20 +88,26 @@ function ModelEditor({ model, index, disabled, update, remove }: ModelEditorProp
         text => change({ maxTokens: text === '' ? undefined : Number(text) }), disabled,
         { type: 'number', min: 1, step: 1, placeholder: '留空使用供应商默认值' })),
       h('div', { style: stack }, h('span', null, '输入模态'),
-        h('p', { style: small }, '继承默认值：文本开启，图片、视频、音频关闭。可独立强制开启或关闭。'),
+        h('p', { style: small }, '未设置不声明模型能力，也不阻止你主动提交媒体；只有手动关闭才阻止发送。供应商反馈不会自动填写或修改。文本默认可用。'),
         ...(Object.keys(modalityLabels) as Modality[]).map(modality =>
           field(modalityLabels[modality], h('select', {
             key: modality, style: inputStyle, 'aria-label': `${modalityLabels[modality]}输入`,
             value: value.modalities?.[modality] ?? 'inherit', disabled,
-            onChange: (event: { target: { value: string } }) => change({
-              modalities: { ...value.modalities, [modality]: event.target.value as ModalityOverride },
-            }),
-          }, h('option', { value: 'inherit' }, `继承（${modality === 'text' ? '开启' : '关闭'}）`),
+            onChange: (event: { target: { value: string } }) => {
+              const modalities = { ...value.modalities }
+              if (event.target.value === 'inherit') delete modalities[modality]
+              else modalities[modality] = event.target.value as ModalityOverride
+              const next = { ...value }
+              if (Object.keys(modalities).length === 0) delete next.modalities
+              else next.modalities = modalities
+              update({ ...model, value: next })
+            },
+          }, h('option', { value: 'inherit' }, modality === 'text' ? '未设置（文本默认可用）' : '未设置'),
           h('option', { value: 'force_enable' }, '强制开启'),
           h('option', { value: 'force_disable' }, '强制关闭')))),
         h('details', null,
           h('summary', { style: { cursor: 'pointer' } }, '如何发送媒体'),
-          h('p', { style: small }, '开启相应模态后，可在支持原文件上传的 Harness 会话中展开“方舟原始媒体”，添加文件、确认 MIME 类型并发送。音频可单独填写格式。'),
+          h('p', { style: small }, '可在支持原文件上传的 Harness 会话中展开“方舟原始媒体”，添加文件并手动填写 MIME 类型后发送。音频可单独填写格式。'),
           h('p', { style: small }, '也可添加附件并使用 /ark-media 命令；每个附件按顺序填写一个 MIME 类型。'),
           h('p', { style: small }, h('code', null, '/ark-media video/mp4,audio/mpeg -- 总结这两个附件')),
           h('p', { style: small }, '“方舟原始媒体”会保留图片、视频和音频的原文件，不自动压缩或转码。普通图片仍可通过聊天附件发送。'))),
@@ -121,7 +127,14 @@ function ModelEditor({ model, index, disabled, update, remove }: ModelEditorProp
 }
 
 /** The host Models page owns the card shell; all configuration goes through its official Remotes. */
-export function VolcengineCard({ provider, operations }: Props): ReactNode {
+export function VolcengineCard(props: Props): ReactNode {
+  const identity = JSON.stringify([props.provider.provider, props.provider.settingsNs, props.provider.settingsPath])
+  // The host keys provider rows by provider id. Keep the same boundary here so
+  // a route identity change remounts its draft without render-phase state.
+  return h(VolcengineCardForm, { ...props, key: identity })
+}
+
+function VolcengineCardForm({ provider, operations }: Props): ReactNode {
   const [namespace, setNamespace] = useState<SettingsNamespaceView>()
   const [original, setOriginal] = useState<DraftRouteConfig>()
   const [changed, setChanged] = useState<Partial<DraftRouteConfig>>({})
@@ -130,18 +143,27 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
   const [keyConfigured, setKeyConfigured] = useState(false)
   const [keyWritable, setKeyWritable] = useState(true)
   const [writable, setWritable] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(true)
   const [failure, setFailure] = useState<string>()
   const [saved, setSaved] = useState(false)
   const [reload, setReload] = useState(0)
+  const mounted = useRef(false)
+  const inFlight = useRef(true)
   const pathKey = JSON.stringify(provider.settingsPath)
 
   useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  useEffect(() => {
     let active = true
+    inFlight.current = true
     setBusy(true)
     setFailure(undefined)
     setSaved(false)
     void operations.read().then(async description => {
+      if (!active) return
       const view = description.namespaces.find(item => item.ns === provider.settingsNs)
       if (view === undefined) throw new Error('方舟配置尚未就绪，请重新载入。')
       const route = routeAt(view.value, provider.settingsPath)
@@ -158,7 +180,9 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
       setKeyWritable(credential?.writable !== false)
       setWritable(description.writable)
     }).catch(error => { if (active) setFailure(failureMessage(error)) })
-      .finally(() => { if (active) setBusy(false) })
+      .finally(() => {
+        if (active) { inFlight.current = false; setBusy(false) }
+      })
     return () => { active = false }
   }, [operations, provider.settingsNs, pathKey, reload])
 
@@ -170,10 +194,13 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
   }
 
   const save = async (): Promise<void> => {
-    if (route === undefined || namespace === undefined || original === undefined) return
+    if (inFlight.current || !mounted.current || !writable || route === undefined || namespace === undefined || original === undefined) return
+    inFlight.current = true
     setBusy(true)
     setFailure(undefined)
     setSaved(false)
+    let settingsCommitted = false
+    let savingCredential = false
     try {
       const nextModels = modelValues(models)
       const modelFailure = validateModels(nextModels)
@@ -184,6 +211,7 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
       const keyValue = key.trim()
       if (/\s/u.test(keyValue)) throw new Error('密钥中含空白字符，请检查粘贴内容。')
       const credential = await operations.describeCredential(ref)
+      if (!mounted.current) return
       if (keyValue.length > 0 && credential?.writable === false) throw new Error('此密钥由运行环境提供，请在运行环境中修改。')
       if (route.enabled !== false && keyValue.length === 0 && credential?.configured !== true) {
         throw new Error('请填写 API Key，或先在运行环境中配置所选密钥引用。')
@@ -193,6 +221,8 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
       const ops = routeChanges(provider.settingsPath, original, edits)
       if (ops.length > 0) {
         const view = await operations.saveSettings(provider.settingsNs, ops, namespace.revision)
+        if (!mounted.current) return
+        settingsCommitted = true
         const committed = routeAt(view.value, provider.settingsPath)
         if (committed === undefined) throw new Error('配置已保存，但暂时无法读取，请重新载入。')
         setNamespace(view)
@@ -200,13 +230,22 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
         setChanged({})
         setModels(modelDrafts(committed))
       }
-      if (keyValue.length > 0) await operations.saveCredential(ref, keyValue)
+      if (keyValue.length > 0) {
+        savingCredential = true
+        await operations.saveCredential(ref, keyValue)
+        if (!mounted.current) return
+      }
       setKey('')
       setKeyConfigured(keyValue.length > 0 || credential?.configured === true)
       setKeyWritable(credential?.writable !== false)
       setSaved(true)
-    } catch (error) { setFailure(failureMessage(error)) }
-    finally { setBusy(false) }
+    } catch (error) {
+      if (mounted.current) setFailure(settingsCommitted && savingCredential
+        ? '配置已保存，但密钥未保存。请保留当前页面并重试保存密钥。'
+        : failureMessage(error))
+    } finally {
+      if (mounted.current) { inFlight.current = false; setBusy(false) }
+    }
   }
 
   return h('section', { 'aria-label': `${provider.displayName}配置`, style: { ...stack, padding: '12px 0' } },
@@ -243,5 +282,10 @@ export function VolcengineCard({ provider, operations }: Props): ReactNode {
       h('button', { type: 'button', disabled: disabled || route === undefined, style: actionStyle,
         onClick: () => { void save() } }, busy ? '处理中…' : '保存方舟配置'),
       h('button', { type: 'button', disabled: busy, style: actionStyle,
-        onClick: () => setReload(current => current + 1) }, '重新载入（放弃未保存修改）')))
+        onClick: () => {
+          if (inFlight.current) return
+          inFlight.current = true
+          setBusy(true)
+          setReload(current => current + 1)
+        } }, '重新载入（放弃未保存修改）')))
 }

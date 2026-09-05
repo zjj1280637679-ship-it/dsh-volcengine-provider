@@ -1,0 +1,1155 @@
+{
+  "timestamp": "2026-09-05T15:41:46.819Z",
+  "commit": "0038917e9ab2d2534f0f3cce0b18e2be8f26dfa6",
+  "node": "v24.19.0",
+  "transport": "real Node HTTP + fetch on 127.0.0.1, production built VolcengineChatAdapter",
+  "externalRequests": 0,
+  "credential": "fixed synthetic local-only value",
+  "limits": {
+    "maxRequests": 150,
+    "textConcurrency": 8,
+    "textRequests": 48,
+    "mediaConcurrency": 3,
+    "mediaBytesEach": 8388608
+  },
+  "cases": [
+    {
+      "name": "48 SSE requests / concurrency 8 / bytewise UTF-8 and CRLF",
+      "status": "pass",
+      "requests": 48,
+      "elapsedMs": 755.49,
+      "completed": 48,
+      "latencyMs": {
+        "min": 69.42673100000002,
+        "p50": 93.43572700000004,
+        "p95": 284.639188,
+        "max": 290.643843
+      }
+    },
+    {
+      "name": "truncated-sse: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 80.08,
+      "observed": {
+        "text": "partial-before-close",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "STREAM_CLOSED",
+          "message": "SSE stream ended without [DONE].",
+          "failure": {
+            "message": "SSE stream ended without [DONE].",
+            "code": "STREAM_CLOSED"
+          }
+        }
+      }
+    },
+    {
+      "name": "socket-disconnect: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 108.03,
+      "observed": {
+        "text": "partial-before-reset",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "terminated"
+        }
+      }
+    },
+    {
+      "name": "bad-json: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 79.46,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "MALFORMED_RESPONSE",
+          "message": "Volcengine Ark returned malformed JSON: {broken json",
+          "failure": {
+            "message": "Volcengine Ark returned malformed JSON: {broken json",
+            "code": "MALFORMED_RESPONSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "bad-sse-json: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 78.52,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "MALFORMED_RESPONSE",
+          "message": "Malformed SSE payload: {broken json",
+          "failure": {
+            "message": "Malformed SSE payload: {broken json",
+            "code": "MALFORMED_RESPONSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "http-429: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 80.23,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "RATE_LIMIT",
+          "message": "Volcengine Ark request failed: rate_limit local controlled rate limit (request local-429)",
+          "failure": {
+            "message": "Volcengine Ark request failed: rate_limit local controlled rate limit (request local-429)",
+            "code": "RATE_LIMIT",
+            "status": 429,
+            "providerRetryAfterMs": 2000,
+            "requestId": "local-429"
+          }
+        }
+      }
+    },
+    {
+      "name": "http-503: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 79.64,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "SERVER",
+          "message": "Volcengine Ark request failed: local controlled unavailable (request local-503)",
+          "failure": {
+            "message": "Volcengine Ark request failed: local controlled unavailable (request local-503)",
+            "code": "SERVER",
+            "status": 503,
+            "providerRetryAfterMs": 1000,
+            "requestId": "local-503"
+          }
+        }
+      }
+    },
+    {
+      "name": "http-413: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 77.61,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "INVALID_REQUEST",
+          "message": "Volcengine Ark request failed: local controlled payload limit",
+          "failure": {
+            "message": "Volcengine Ark request failed: local controlled payload limit",
+            "code": "INVALID_REQUEST",
+            "status": 413
+          }
+        }
+      }
+    },
+    {
+      "name": "redirect: rejected without self-retry",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 78.96,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "fetch failed"
+        }
+      }
+    },
+    {
+      "name": "caller deadline while waiting for response headers",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 151.44,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "TimeoutError",
+          "code": 23,
+          "message": "The operation was aborted due to timeout"
+        }
+      }
+    },
+    {
+      "name": "caller cancellation after first SSE content",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 151.87,
+      "observed": {
+        "text": "before-cancel",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "AbortError",
+          "code": 20,
+          "message": "This operation was aborted"
+        }
+      }
+    },
+    {
+      "name": "pre-aborted call performs no HTTP request",
+      "status": "pass",
+      "requests": 0,
+      "elapsedMs": 0.43,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "AbortError",
+          "code": 20,
+          "message": "This operation was aborted"
+        }
+      }
+    },
+    {
+      "name": "empty completion is not reported as success",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2.89,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": {
+          "kind": "error",
+          "failure": {
+            "message": "model returned a completed response with no content",
+            "code": "EMPTY_RESPONSE"
+          }
+        },
+        "error": null
+      }
+    },
+    {
+      "name": "json-null: provider shape errors stay structured",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2.18,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "MALFORMED_RESPONSE",
+          "message": "Malformed Ark response: response must be an object",
+          "failure": {
+            "message": "Malformed Ark response: response must be an object",
+            "code": "MALFORMED_RESPONSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "sse-null: provider shape errors stay structured",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 1.64,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "MALFORMED_RESPONSE",
+          "message": "Malformed Ark response: response must be an object",
+          "failure": {
+            "message": "Malformed Ark response: response must be an object",
+            "code": "MALFORMED_RESPONSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "SSE content without finish_reason must not claim normal stop",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 1.46,
+      "observed": {
+        "text": "partial-without-finish",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "MALFORMED_RESPONSE",
+          "message": "Malformed Ark response: stream ended without finish_reason for choice 0",
+          "failure": {
+            "message": "Malformed Ark response: stream ended without finish_reason for choice 0",
+            "code": "MALFORMED_RESPONSE"
+          }
+        }
+      }
+    },
+    {
+      "name": "custom n=2 keeps separate choices or explicitly rejects unsupported choice count",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 3.24,
+      "observed": {
+        "text": "first-choice",
+        "reasoning": "",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "first-choice"
+          }
+        ],
+        "finish": {
+          "kind": "stop"
+        },
+        "error": null
+      },
+      "request": {
+        "requestedN": 2,
+        "responseClosed": true
+      }
+    },
+    {
+      "name": "real published Harness LlmRuntime: interleaved two-tool call and second model round",
+      "status": "pass",
+      "requests": 2,
+      "elapsedMs": 18.94,
+      "first": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [
+          {
+            "type": "tool-call",
+            "id": "call-a",
+            "name": "sum",
+            "arguments": "{\"a\":2,\"b\":3}"
+          },
+          {
+            "type": "tool-call",
+            "id": "call-b",
+            "name": "echo",
+            "arguments": "{\"text\":\"你好🌋\"}"
+          }
+        ],
+        "finish": {
+          "kind": "tool-calls"
+        },
+        "error": null
+      },
+      "second": {
+        "text": "sum=5; echo=你好🌋",
+        "reasoning": "",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "sum=5; echo=你好🌋"
+          }
+        ],
+        "finish": {
+          "kind": "stop"
+        },
+        "error": null
+      },
+      "wire": {
+        "roles": [
+          "user",
+          "assistant",
+          "tool",
+          "tool"
+        ],
+        "assistantCalls": [
+          {
+            "id": "call-a",
+            "type": "function",
+            "function": {
+              "name": "sum",
+              "arguments": "{\"a\":2,\"b\":3}"
+            }
+          },
+          {
+            "id": "call-b",
+            "type": "function",
+            "function": {
+              "name": "echo",
+              "arguments": "{\"text\":\"你好🌋\"}"
+            }
+          }
+        ],
+        "results": [
+          {
+            "role": "tool",
+            "tool_call_id": "call-a",
+            "content": "5"
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call-b",
+            "content": "你好🌋"
+          }
+        ],
+        "responseClosed": true
+      },
+      "scope": "real LlmRuntime and production adapter; tool execution is controlled local code, not a full Agent loop"
+    },
+    {
+      "name": "3 concurrent 8 MiB opaque media payloads survive exact-byte HTTP transmission",
+      "status": "pass",
+      "requests": 3,
+      "elapsedMs": 1955.89,
+      "baselineRssBytes": 84602880,
+      "note": "Synthetic opaque bytes declared as image/video/audio test only serialization transport, not media decoding or supplier capability.",
+      "payloads": [
+        {
+          "modality": "audio",
+          "sourceBytes": 8388608,
+          "sourceSha256": "5c2f9c648170787fbd27f7f65f575844241ccce148b1cb78760d60736dcb3380",
+          "wire": {
+            "type": "input_audio",
+            "bytes": 8388608,
+            "sha256": "5c2f9c648170787fbd27f7f65f575844241ccce148b1cb78760d60736dcb3380",
+            "format": "x-audit",
+            "responseClosed": true
+          },
+          "elapsedMs": 1788.9286509999997,
+          "error": null,
+          "finish": {
+            "kind": "stop"
+          }
+        },
+        {
+          "modality": "image",
+          "sourceBytes": 8388608,
+          "sourceSha256": "bb929bbdce85fdbc903a463e96630a25f8b6ef5b76090e24cd92ea8fb47b2f65",
+          "wire": {
+            "type": "image_url",
+            "bytes": 8388608,
+            "sha256": "bb929bbdce85fdbc903a463e96630a25f8b6ef5b76090e24cd92ea8fb47b2f65",
+            "responseClosed": true
+          },
+          "elapsedMs": 1890.9627499999997,
+          "error": null,
+          "finish": {
+            "kind": "stop"
+          }
+        },
+        {
+          "modality": "video",
+          "sourceBytes": 8388608,
+          "sourceSha256": "854edd4e82fb2fcf0dbaa5c21f28cd6f1e14b6bd2d91cfa53a875b9f9c9bffe2",
+          "wire": {
+            "type": "video_url",
+            "bytes": 8388608,
+            "sha256": "854edd4e82fb2fcf0dbaa5c21f28cd6f1e14b6bd2d91cfa53a875b9f9c9bffe2",
+            "responseClosed": true
+          },
+          "elapsedMs": 1885.1881609999996,
+          "error": null,
+          "finish": {
+            "kind": "stop"
+          }
+        }
+      ],
+      "peakRssBytes": 339873792,
+      "rssIncreaseBytes": 255270912,
+      "processIncludesBothHttpClientAndLocalServer": true
+    },
+    {
+      "name": "idle SSE without caller signal: bounded observation of adapter timeout ownership",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2002.96,
+      "completedAutonomouslyWithin2000ms": false,
+      "intervention": "test closes this single local response after the observation window",
+      "observedAfterTestIntervention": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "TypeError",
+          "code": null,
+          "message": "terminated"
+        }
+      },
+      "interpretation": "Absence of a two-second adapter deadline is an ownership observation, not proof of an infinite hang or universal bug; callers can provide AbortSignal deadlines."
+    },
+    {
+      "name": "consumer break after first chunk closes local response socket",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2002.84,
+      "firstChunkType": "block-start",
+      "responseClosedWithin2000ms": true
+    },
+    {
+      "name": "in-band SSE error preserves upstream structured diagnostic",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2.21,
+      "observed": {
+        "text": "",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "PROVIDER_ERROR",
+          "message": "Volcengine Ark response failed: local_stream_error controlled upstream stream failure",
+          "failure": {
+            "message": "Volcengine Ark response failed: local_stream_error controlled upstream stream failure",
+            "code": "PROVIDER_ERROR"
+          }
+        }
+      }
+    },
+    {
+      "name": "partial content followed by in-band SSE error must not report normal stop",
+      "status": "pass",
+      "requests": 1,
+      "elapsedMs": 2.03,
+      "observed": {
+        "text": "partial-before-upstream-error",
+        "reasoning": "",
+        "blocks": [],
+        "finish": null,
+        "error": {
+          "name": "LlmError",
+          "code": "PROVIDER_ERROR",
+          "message": "Volcengine Ark response failed: local_partial_stream_error controlled failure after partial content",
+          "failure": {
+            "message": "Volcengine Ark response failed: local_partial_stream_error controlled failure after partial content",
+            "code": "PROVIDER_ERROR"
+          }
+        }
+      }
+    }
+  ],
+  "distSha256": "2da1b31a9380e2f65ad00896aa29c84860a6c463836e29ef903e76406a2af65d",
+  "totalRequests": 72,
+  "requestBodyBytesTotal": 33566321,
+  "requests": [
+    {
+      "number": 1,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-0",
+      "status": 200
+    },
+    {
+      "number": 2,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-1",
+      "status": 200
+    },
+    {
+      "number": 3,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-2",
+      "status": 200
+    },
+    {
+      "number": 4,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-3",
+      "status": 200
+    },
+    {
+      "number": 5,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-4",
+      "status": 200
+    },
+    {
+      "number": 6,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-5",
+      "status": 200
+    },
+    {
+      "number": 7,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-6",
+      "status": 200
+    },
+    {
+      "number": 8,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-7",
+      "status": 200
+    },
+    {
+      "number": 9,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-8",
+      "status": 200
+    },
+    {
+      "number": 10,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-10",
+      "status": 200
+    },
+    {
+      "number": 11,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "concurrent-9",
+      "status": 200
+    },
+    {
+      "number": 12,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-11",
+      "status": 200
+    },
+    {
+      "number": 13,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-12",
+      "status": 200
+    },
+    {
+      "number": 14,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-13",
+      "status": 200
+    },
+    {
+      "number": 15,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-14",
+      "status": 200
+    },
+    {
+      "number": 16,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-15",
+      "status": 200
+    },
+    {
+      "number": 17,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-16",
+      "status": 200
+    },
+    {
+      "number": 18,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-17",
+      "status": 200
+    },
+    {
+      "number": 19,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-18",
+      "status": 200
+    },
+    {
+      "number": 20,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-19",
+      "status": 200
+    },
+    {
+      "number": 21,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-20",
+      "status": 200
+    },
+    {
+      "number": 22,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-21",
+      "status": 200
+    },
+    {
+      "number": 23,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-22",
+      "status": 200
+    },
+    {
+      "number": 24,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-23",
+      "status": 200
+    },
+    {
+      "number": 25,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-24",
+      "status": 200
+    },
+    {
+      "number": 26,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-25",
+      "status": 200
+    },
+    {
+      "number": 27,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-26",
+      "status": 200
+    },
+    {
+      "number": 28,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-27",
+      "status": 200
+    },
+    {
+      "number": 29,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-28",
+      "status": 200
+    },
+    {
+      "number": 30,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-29",
+      "status": 200
+    },
+    {
+      "number": 31,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-30",
+      "status": 200
+    },
+    {
+      "number": 32,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-31",
+      "status": 200
+    },
+    {
+      "number": 33,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-32",
+      "status": 200
+    },
+    {
+      "number": 34,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-33",
+      "status": 200
+    },
+    {
+      "number": 35,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-34",
+      "status": 200
+    },
+    {
+      "number": 36,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-35",
+      "status": 200
+    },
+    {
+      "number": 37,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-36",
+      "status": 200
+    },
+    {
+      "number": 38,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-37",
+      "status": 200
+    },
+    {
+      "number": 39,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-38",
+      "status": 200
+    },
+    {
+      "number": 40,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-39",
+      "status": 200
+    },
+    {
+      "number": 41,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-40",
+      "status": 200
+    },
+    {
+      "number": 42,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-41",
+      "status": 200
+    },
+    {
+      "number": 43,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-42",
+      "status": 200
+    },
+    {
+      "number": 44,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-43",
+      "status": 200
+    },
+    {
+      "number": 45,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-44",
+      "status": 200
+    },
+    {
+      "number": 46,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-45",
+      "status": 200
+    },
+    {
+      "number": 47,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-46",
+      "status": 200
+    },
+    {
+      "number": 48,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "concurrent-47",
+      "status": 200
+    },
+    {
+      "number": 49,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "truncated-sse",
+      "status": 200
+    },
+    {
+      "number": 50,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 149,
+      "model": "socket-disconnect",
+      "status": 200
+    },
+    {
+      "number": 51,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "bad-json",
+      "status": 200
+    },
+    {
+      "number": 52,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 144,
+      "model": "bad-sse-json",
+      "status": 200
+    },
+    {
+      "number": 53,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "http-429",
+      "status": 429
+    },
+    {
+      "number": 54,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "http-503",
+      "status": 503
+    },
+    {
+      "number": 55,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "http-413",
+      "status": 413
+    },
+    {
+      "number": 56,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "redirect",
+      "status": 307
+    },
+    {
+      "number": 57,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 147,
+      "model": "headers-timeout",
+      "status": "deliberately-no-response"
+    },
+    {
+      "number": 58,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 145,
+      "model": "stream-cancel",
+      "status": 200
+    },
+    {
+      "number": 59,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 148,
+      "model": "empty-completion",
+      "status": 200
+    },
+    {
+      "number": 60,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 141,
+      "model": "json-null",
+      "status": 200
+    },
+    {
+      "number": 61,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 140,
+      "model": "sse-null",
+      "status": 200
+    },
+    {
+      "number": 62,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 153,
+      "model": "missing-finish-reason",
+      "status": 200
+    },
+    {
+      "number": 63,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 154,
+      "model": "multiple-choices",
+      "status": 200
+    },
+    {
+      "number": 64,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 540,
+      "model": "tool-round-1",
+      "status": 200
+    },
+    {
+      "number": 65,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 899,
+      "model": "tool-round-2",
+      "status": 200
+    },
+    {
+      "number": 66,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 11185055,
+      "model": "media-audio",
+      "status": 200
+    },
+    {
+      "number": 67,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 11185053,
+      "model": "media-image",
+      "status": 200
+    },
+    {
+      "number": 68,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 11185053,
+      "model": "media-video",
+      "status": 200
+    },
+    {
+      "number": 69,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 151,
+      "model": "idle-without-signal",
+      "status": 200
+    },
+    {
+      "number": 70,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 146,
+      "model": "consumer-break",
+      "status": 200
+    },
+    {
+      "number": 71,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 150,
+      "model": "stream-error-event",
+      "status": 200
+    },
+    {
+      "number": 72,
+      "path": "/api/coding/v3/chat/completions",
+      "method": "POST",
+      "bytes": 158,
+      "model": "partial-stream-error-event",
+      "status": 200
+    }
+  ],
+  "serverErrors": [],
+  "summary": {
+    "passed": 23,
+    "failed": 0
+  },
+  "ok": true
+}

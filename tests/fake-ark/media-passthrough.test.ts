@@ -96,7 +96,7 @@ describe('fake ark: freedom-preserving media transport', () => {
         raw: { [`supports_${modality}`]: false },
       }
       const config = createDefaultModelConfig()
-      config.modalities[modality].override = 'force_enable'
+      config.modalities[modality] = { override: 'force_enable' }
       expect(feedback.modalities?.[modality]?.reportedSupport).toBe('unsupported')
       expect(isModalityEnabled(config, modality)).toBe(true)
 

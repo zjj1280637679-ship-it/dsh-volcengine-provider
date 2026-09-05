@@ -29,6 +29,12 @@ function providerDetail(parsed: WireErrorBody | undefined, fallback: string): st
   return fields.length > 0 ? fields.map(String).join(' ') : fallback
 }
 
+/** A successful HTTP status can still carry an Ark error, including inside SSE. */
+export function providerResponseError(body: WireErrorBody): LlmError {
+  const detail = providerDetail(body, 'provider returned an error without diagnostic detail')
+  return new LlmError(`Volcengine Ark response failed: ${detail}`, 'PROVIDER_ERROR')
+}
+
 /** Map Ark HTTP failures onto the provider-neutral Harness routing taxonomy. */
 export function httpErrorCode(
   status: number,

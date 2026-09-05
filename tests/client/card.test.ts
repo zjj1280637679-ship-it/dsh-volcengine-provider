@@ -30,6 +30,13 @@ function input(label: string): HTMLInputElement | HTMLSelectElement | HTMLTextAr
   return element
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
 async function change(label: string, value: string): Promise<void> {
   await act(async () => {
     const element = input(label)
@@ -149,11 +156,157 @@ describe('Volcengine Models card', () => {
     await click('保存方舟配置')
     expect(fixture.saveSettings).toHaveBeenCalledOnce()
     expect(input('API Key').value).toBe('temporary-test-key')
+    expect(container.querySelector('[role="alert"]')?.textContent)
+      .toBe('配置已保存，但密钥未保存。请保留当前页面并重试保存密钥。')
+    expect(container.querySelector('[role="status"]')).toBeNull()
     await change('模型 ID', 'second-edit')
     await click('保存方舟配置')
     expect(fixture.saveSettings.mock.calls[1][2]).toBe(8)
     expect(fixture.saveCredential).toHaveBeenCalledTimes(2)
     expect(input('API Key').value).toBe('')
     expect(container.textContent).toContain('已保存')
+  })
+
+  it('admits only one save for two activations in the same React batch', async () => {
+    const fixture = setup()
+    const pending = deferred<void>()
+    fixture.saveCredential.mockImplementation(() => pending.promise)
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    await change('API Key', 'temporary-test-key')
+    const save = [...container.querySelectorAll('button')].find(item => item.textContent === '保存方舟配置')!
+    await act(async () => { save.click(); save.click() })
+    expect(fixture.saveCredential).toHaveBeenCalledOnce()
+    expect(fixture.operations.describeCredential).toHaveBeenCalledTimes(2)
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
+    await act(async () => pending.resolve())
+    expect(input('API Key').value).toBe('')
+    expect(container.textContent).toContain('已保存')
+  })
+
+  it.each(['provider', 'path', 'namespace'] as const)(
+    'resets the draft immediately for a new %s binding and ignores an old pending save', async kind => {
+      const fixture = setup()
+      const pendingSave = deferred<SettingsNamespaceView>()
+      const pendingRead = deferred<Awaited<ReturnType<CardOperations['read']>>>()
+      fixture.saveSettings.mockImplementation(() => pendingSave.promise)
+      await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+      await change('API Key', 'temporary-old-key')
+      await change('模型 ID', 'old-unsaved-edit')
+      await click('保存方舟配置')
+      expect(fixture.saveSettings).toHaveBeenCalledOnce()
+
+      const nextView = structuredClone(fixture.readView())
+      const nextProps = { ...fixture.props, provider: { ...fixture.props.provider } }
+      if (kind === 'provider') nextProps.provider.provider = 'volcengine-another-provider'
+      if (kind === 'path') {
+        nextProps.provider.settingsPath = ['routes', 'coding']
+        nextView.value = { routes: { coding: {
+          kind: 'coding-plan', models: [{ id: 'coding-model' }],
+        } } }
+      }
+      if (kind === 'namespace') {
+        nextProps.provider.settingsNs = 'llm-other-namespace'
+        nextView.ns = 'llm-other-namespace'
+      }
+      vi.mocked(fixture.operations.read).mockImplementationOnce(() => pendingRead.promise)
+
+      await act(async () => { root.render(createElement(VolcengineCard, nextProps)) })
+      // While the new binding is loading, no previous route fields or draft key
+      // are rendered under its title; an effect-only reset would leave them here.
+      expect(container.querySelector('[aria-label="模型 ID"]')).toBeNull()
+      expect(container.querySelector('[aria-label="API Key"]')).toBeNull()
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      await act(async () => pendingRead.resolve({ writable: true, hasDocument: true, namespaces: [nextView] }))
+      expect(input('模型 ID').value).toBe(kind === 'path' ? 'coding-model' : 'my-model')
+      expect(input('API Key').value).toBe('')
+
+      const committed = structuredClone(fixture.readView())
+      committed.revision = 8
+      committed.value = { routes: { standard: {
+        kind: 'standard', apiKeyEnv: 'ARK_STANDARD_API_KEY', models: [{ id: 'old-committed-edit' }],
+      } } }
+      await act(async () => pendingSave.resolve(committed))
+      expect(fixture.saveCredential).not.toHaveBeenCalled()
+      expect(input('模型 ID').value).toBe(kind === 'path' ? 'coding-model' : 'my-model')
+      expect(input('密钥引用名称').value).toBe(kind === 'path' ? 'ARK_CODING_PLAN_API_KEY' : 'ARK_STANDARD_API_KEY')
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.querySelector('[role="status"]')).toBeNull()
+    },
+  )
+
+  it('does not start a settings or credential write after unmount during credential validation', async () => {
+    const fixture = setup()
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    await change('API Key', 'temporary-test-key')
+    await change('模型 ID', 'pending-edit')
+    const pending = deferred<Awaited<ReturnType<CardOperations['describeCredential']>>>()
+    vi.mocked(fixture.operations.describeCredential).mockImplementationOnce(() => pending.promise)
+    await click('保存方舟配置')
+    await act(async () => { root.unmount() })
+    await act(async () => pending.resolve(undefined))
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
+    expect(fixture.saveCredential).not.toHaveBeenCalled()
+    root = createRoot(container)
+  })
+
+  it('does not refill a new provider binding with an older credential-save failure', async () => {
+    const fixture = setup()
+    const pending = deferred<void>()
+    fixture.saveCredential.mockImplementationOnce(() => pending.promise)
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    await change('API Key', 'temporary-old-key')
+    await click('保存方舟配置')
+    fixture.readView().value = { routes: { coding: {
+      kind: 'coding-plan', apiKeyEnv: 'ARK_CODING_PLAN_API_KEY', models: [{ id: 'coding-model' }],
+    } } }
+    await act(async () => { root.render(createElement(VolcengineCard, {
+      ...fixture.props,
+      provider: { ...fixture.props.provider, provider: 'volcengine-coding', displayName: 'Coding Plan',
+        settingsPath: ['routes', 'coding'] },
+    })) })
+    await change('API Key', 'temporary-new-key')
+    await act(async () => pending.reject(new Error('old-connection-failure')))
+    expect(input('API Key').value).toBe('temporary-new-key')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('leaves all media unset until manual edits and removes a choice when returned to unset', async () => {
+    const fixture = setup()
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    expect(input('图片输入').value).toBe('inherit')
+    expect(input('视频输入').value).toBe('inherit')
+    expect(input('音频输入').value).toBe('inherit')
+    expect(input('视频输入').textContent).not.toContain('继承（关闭）')
+    await change('API Key', 'temporary-test-key')
+    await change('图片输入', 'force_enable')
+    await change('视频输入', 'force_disable')
+    await change('音频输入', 'force_enable')
+    await change('图片输入', 'inherit')
+    await change('音频输入', 'inherit')
+    await click('保存方舟配置')
+    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+      id: 'my-model', futureModelOption: { keep: true }, modalities: { video: 'force_disable' },
+    }] }])
+    await change('API Key', 'temporary-test-key')
+    await change('视频输入', 'inherit')
+    await click('保存方舟配置')
+    expect(fixture.saveSettings.mock.calls[1][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+      id: 'my-model', futureModelOption: { keep: true },
+    }] }])
+  })
+
+  it('preserves already stored inherit fields when the user does not edit them', async () => {
+    const fixture = setup()
+    fixture.readView().value = { routes: { standard: {
+      kind: 'standard', models: [{ id: 'legacy-model', modalities: { image: 'inherit', audio: 'force_enable' } }],
+    } } }
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    await change('API Key', 'temporary-test-key')
+    await change('模型 ID', 'renamed-model')
+    await click('保存方舟配置')
+    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+      id: 'renamed-model', modalities: { image: 'inherit', audio: 'force_enable' },
+    }] }])
   })
 })

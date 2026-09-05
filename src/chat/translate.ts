@@ -7,11 +7,13 @@ import {
   type ToolCallId,
 } from '@deepseek-ai/dsh-llm'
 
+import { providerResponseError } from './errors.js'
 import { DONE } from './sse.js'
 import type {
-  WireChunk,
-  WireCompletion,
+  WireChoice,
+  WireCompletionChoice,
   WireCompletionMessage,
+  WireErrorBody,
   WireUsage,
 } from './types.js'
 
@@ -82,6 +84,93 @@ function closeBlock(block: OpenBlock): ContentBlock {
   }
 }
 
+function malformed(detail: string): never {
+  throw new LlmError(`Malformed Ark response: ${detail}`, 'MALFORMED_RESPONSE')
+}
+
+function object(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    malformed(`${field} must be an object`)
+  }
+  return value as Record<string, unknown>
+}
+
+function optionalString(value: unknown, field: string): void {
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    malformed(`${field} must be a string or null`)
+  }
+}
+
+function responseObject(value: unknown): Record<string, unknown> {
+  const response = object(value, 'response')
+  if (response.error !== undefined && response.error !== null) {
+    const error = object(response.error, 'error')
+    optionalString(error.message, 'error.message')
+    optionalString(error.type, 'error.type')
+    optionalString(response.message, 'message')
+    for (const code of [error.code, response.code]) {
+      if (code !== undefined && code !== null && typeof code !== 'string' && typeof code !== 'number') {
+        malformed('provider error code must be a string or number')
+      }
+    }
+    throw providerResponseError(response as WireErrorBody)
+  }
+  if (!Array.isArray(response.choices)) malformed('choices must be an array')
+  if (response.usage !== undefined && response.usage !== null) {
+    const usage = object(response.usage, 'usage')
+    for (const field of ['prompt_tokens_details', 'completion_tokens_details']) {
+      if (usage[field] !== undefined && usage[field] !== null) object(usage[field], `usage.${field}`)
+    }
+  }
+  return response
+}
+
+/** Harness assembles one answer. Project choice 0 without changing the user's n. */
+function firstChoice(response: Record<string, unknown>): Record<string, unknown> | undefined {
+  const choices = response.choices as unknown[]
+  let first: Record<string, unknown> | undefined
+  const indices = new Set<number>()
+  for (const value of choices) {
+    const choice = object(value, 'choice')
+    // Some compatible providers omit the index for their sole candidate.
+    const index = choice.index === undefined && choices.length === 1 ? 0 : choice.index
+    if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || indices.has(index)) {
+      malformed('choice indices must be distinct non-negative integers')
+    }
+    indices.add(index)
+    if (index === 0) first = choice
+  }
+  if (first !== undefined) {
+    optionalString(first.finish_reason, 'finish_reason')
+    if (first.finish_reason === '') malformed('finish_reason must not be empty')
+  }
+  return first
+}
+
+/** Validate only the wire fields consumed by this single-answer translator. */
+function contentFields(value: unknown, field: string, streaming: boolean): void {
+  const content = object(value, field)
+  optionalString(content.content, `${field}.content`)
+  optionalString(content.reasoning_content, `${field}.reasoning_content`)
+  if (content.tool_calls === undefined || content.tool_calls === null) return
+  if (!Array.isArray(content.tool_calls)) malformed(`${field}.tool_calls must be an array`)
+  for (const value of content.tool_calls) {
+    const call = object(value, `${field}.tool_calls[]`)
+    if (streaming) {
+      if (typeof call.index !== 'number' || !Number.isSafeInteger(call.index) || call.index < 0) {
+        malformed('tool call index must be a non-negative integer')
+      }
+      optionalString(call.id, 'tool call id')
+      if (call.function === undefined || call.function === null) continue
+    } else if (typeof call.id !== 'string') malformed('tool call id must be a string')
+    const fn = object(call.function, 'tool call function')
+    for (const key of ['name', 'arguments']) {
+      if (streaming) optionalString(fn[key], `tool call function.${key}`)
+      else if (typeof fn[key] !== 'string') malformed(`tool call function.${key} must be a string`)
+    }
+  }
+}
+
 /** Stateful OpenAI-compatible streaming translator. */
 export async function* translateSsePayloads(
   payloads: AsyncIterable<string>,
@@ -102,11 +191,14 @@ export async function* translateSsePayloads(
 
   for await (const payload of payloads) {
     if (payload === DONE) {
+      if (pendingFinish === undefined) {
+        malformed('stream ended without finish_reason for choice 0')
+      }
       for (const block of order) {
         yield { type: 'block-end', index: block.index, block: closeBlock(block) }
       }
       if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
-      const reason = pendingFinish ?? { kind: 'stop' as const }
+      const reason = pendingFinish
       yield {
         type: 'finish',
         reason: reason.kind === 'stop' && order.length === 0
@@ -122,9 +214,9 @@ export async function* translateSsePayloads(
       return
     }
 
-    let chunk: WireChunk
+    let value: unknown
     try {
-      chunk = JSON.parse(payload) as WireChunk
+      value = JSON.parse(payload) as unknown
     } catch {
       throw new LlmError(
         `Malformed SSE payload: ${payload.slice(0, 120)}`,
@@ -132,7 +224,13 @@ export async function* translateSsePayloads(
       )
     }
 
-    for (const choice of chunk.choices ?? []) {
+    const chunk = responseObject(value)
+    const selected = firstChoice(chunk)
+    if (selected !== undefined) {
+      if (selected.delta !== undefined && selected.delta !== null) {
+        contentFields(selected.delta, 'delta', true)
+      }
+      const choice = selected as WireChoice
       const delta = choice.delta
       const reasoning = delta?.reasoning_content
       if (typeof reasoning === 'string' && reasoning.length > 0) {
@@ -182,7 +280,7 @@ export async function* translateSsePayloads(
     }
 
     if (chunk.usage !== undefined && chunk.usage !== null) {
-      pendingUsage = mapUsage(chunk.usage) ?? pendingUsage
+      pendingUsage = mapUsage(chunk.usage as WireUsage) ?? pendingUsage
     }
   }
 
@@ -210,10 +308,15 @@ function completionBlocks(message: WireCompletionMessage): ContentBlock[] {
 
 /** Translate a non-streaming Chat completion into the same Harness chunk protocol. */
 export async function* translateCompletion(
-  completion: WireCompletion,
+  completion: unknown,
 ): AsyncGenerator<StreamChunk> {
-  const choice = completion.choices?.[0]
-  const blocks = choice?.message === undefined ? [] : completionBlocks(choice.message)
+  const response = responseObject(completion)
+  const selected = firstChoice(response)
+  if (selected === undefined) malformed('response has no choice 0')
+  contentFields(selected.message, 'message', false)
+  const choice = selected as WireCompletionChoice
+  if (typeof choice.finish_reason !== 'string') malformed('response has no finish_reason for choice 0')
+  const blocks = completionBlocks(choice.message!)
   let index = 0
   for (const block of blocks) {
     yield { type: 'block-start', index, blockType: block.type }
@@ -232,14 +335,12 @@ export async function* translateCompletion(
     index += 1
   }
 
-  if (completion.usage !== undefined && completion.usage !== null) {
-    const usage = mapUsage(completion.usage)
+  if (response.usage !== undefined && response.usage !== null) {
+    const usage = mapUsage(response.usage as WireUsage)
     if (usage !== undefined) yield { type: 'usage', usage }
   }
 
-  const reason = typeof choice?.finish_reason === 'string'
-    ? mapFinishReason(choice.finish_reason)
-    : { kind: 'stop' as const }
+  const reason = mapFinishReason(choice.finish_reason)
   yield {
     type: 'finish',
     reason: reason.kind === 'stop' && blocks.length === 0

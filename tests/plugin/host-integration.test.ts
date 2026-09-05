@@ -167,7 +167,7 @@ describe('Volcengine plugin in the public Harness runtime', () => {
     const { ctx } = await boot(config, { key: 'before-key' })
     const prepared = await ctx.llm.prepareCall({ provider: 'volcengine-standard', model: 'manual-model' })
     expect(prepared.config.maxTokens).toBe(256)
-    expect(prepared.inputModalities).toEqual(['text'])
+    expect(Object.hasOwn(prepared, 'inputModalities')).toBe(false)
 
     await ctx.settings.update(SETTINGS_NS, { routes: { standard: {
       baseURL: second.baseUrl,
@@ -186,9 +186,9 @@ describe('Volcengine plugin in the public Harness runtime', () => {
     expect((await prompt(ctx)).at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
     expect(second.requests[0]!.headers.authorization).toBe('Bearer after-key')
     expect(second.requests[0]!.json).toMatchObject({ generation: 'after', max_tokens: 512 })
-    await expect(ctx.llm.resolveModelInfo('volcengine-standard', 'manual-model')).resolves.toMatchObject({
-      inputModalities: ['text', 'video'], defaultMaxTokens: 512,
-    })
+    const resolved = await ctx.llm.resolveModelInfo('volcengine-standard', 'manual-model')
+    expect(resolved).toMatchObject({ defaultMaxTokens: 512 })
+    expect(Object.hasOwn(resolved, 'inputModalities')).toBe(false)
   })
 
   it('honors an explicit text disable before HTTP and re-enables it through the model card', async () => {
@@ -242,9 +242,9 @@ describe('Volcengine plugin in the public Harness runtime', () => {
     expect(ctx.settings.get(SETTINGS_NS)).toEqual(before)
     const resolved = await ctx.llm.resolveModelInfo('volcengine-standard', 'manual-model')
     expect(resolved).toMatchObject({
-      name: 'My manual model', inputModalities: ['text', 'video'],
-      context: { contextWindow: 65536 }, defaultMaxTokens: 512,
+      name: 'My manual model', context: { contextWindow: 65536 }, defaultMaxTokens: 512,
     })
+    expect(Object.hasOwn(resolved, 'inputModalities')).toBe(false)
     expect(resolved).not.toHaveProperty('reasoning')
   })
 

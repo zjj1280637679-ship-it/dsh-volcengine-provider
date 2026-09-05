@@ -5,6 +5,7 @@ import {
   isModalityEnabled,
   type ModelFeedback,
 } from '../../src/domain.js'
+import { modelPolicy } from '../../src/config.js'
 
 describe('freedom contract: modality policy', () => {
   it('allows a modality to be force-enabled even when supplier feedback says unsupported', () => {
@@ -19,7 +20,7 @@ describe('freedom contract: modality policy', () => {
     }
 
     const config = createDefaultModelConfig()
-    config.modalities.video.override = 'force_enable'
+    config.modalities.video = { override: 'force_enable' }
 
     // Feedback is intentionally not an input to the permission function.
     expect(feedback.modalities?.video?.reportedSupport).toBe('unsupported')
@@ -28,15 +29,31 @@ describe('freedom contract: modality policy', () => {
 
   it('lets explicit force-disable win over the default enabled state', () => {
     const config = createDefaultModelConfig()
-    config.modalities.text.override = 'force_disable'
+    config.modalities.text = { override: 'force_disable' }
 
     expect(isModalityEnabled(config, 'text')).toBe(false)
   })
 
-  it('uses local configured state for inherit without consulting supplier feedback', () => {
+  it.each(['image', 'video', 'audio'] as const)(
+    'leaves unconfigured %s unknown and permits a user-requested attempt', modality => {
+      const config = createDefaultModelConfig()
+
+      expect(Object.hasOwn(config.modalities, modality)).toBe(false)
+      expect(isModalityEnabled(config, modality)).toBe(true)
+    },
+  )
+
+  it('does not generate media settings for a manually entered model id', () => {
+    const config = modelPolicy({ id: 'user-entered-model' })
+
+    expect(config.modalities).toEqual({})
+    expect(['image', 'video', 'audio'].every(modality =>
+      !Object.hasOwn(config.modalities, modality))).toBe(true)
+  })
+
+  it('treats an explicit inherit as unknown without consulting supplier feedback', () => {
     const config = createDefaultModelConfig()
-    config.modalities.audio.enabled = true
-    config.modalities.audio.override = 'inherit'
+    config.modalities.audio = { override: 'inherit' }
 
     expect(isModalityEnabled(config, 'audio')).toBe(true)
   })

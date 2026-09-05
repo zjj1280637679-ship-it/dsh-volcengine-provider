@@ -4,11 +4,11 @@
 
 ## 使用
 
-1. 在 Models 中保存方舟通道的密钥及模型，开启所需输入模态，选择该模型。
-2. 展开“方舟原始媒体”，添加文件，确认每个文件的 MIME。浏览器提供的 MIME 仅预填，可编辑；空 MIME 需要明确填写，不根据文件名补猜。
-3. 音频可以选择性填写 `format`，例如 `mp3`；新格式也可自行声明。填写问题后点击“发送媒体”。任务运行时按钮会说明消息将插入当前任务。
+1. 在 Models 中保存方舟通道的密钥及模型并选择该模型。模态未设置时表示未知且允许尝试；只有用户明确强制关闭的模态会被阻断。
+2. 展开“方舟原始媒体”并添加文件。每个新文件的 MIME 初始保持空白，即使浏览器提供 `File.type` 也不自动带入；必须由用户明确填写，例如 `image/png`、`audio/mpeg` 或 `video/mp4`。
+3. 音频可以选择性填写 `format`，例如 `mp3`；新格式也可自行声明。留空时允许协议序列化从用户填写的 MIME 临时推导，且不回写文件草稿或模型配置。填写问题后点击“发送媒体”。任务运行时按钮会说明消息将插入当前任务。
 
-本次选择的模型可直接使用 [coding-plan-media.yml](../examples/coding-plan-media.yml) 作为启动 patch，替代基础 `cordis.yml`。它为 lite 开启图片，为 flash 开启图片和视频，文本沿用默认开启；普通 API 和 Agent Plan 卡片仍保留。这个示例不是默认模型目录或能力白名单。音频开关仍可编辑，本次 Coding Plan 音频拒绝没有改写插件权限。
+本次选择的模型可使用 [coding-plan-media.yml](../examples/coding-plan-media.yml) 作为启动 patch，替代基础 `cordis.yml`。它只列出 lite 与 flash 的模型 ID，不预填文本、图片、视频或音频设置；普通 API 和 Agent Plan 卡片仍保留。用户若需要可在卡片中明确强制开启或关闭，但未设置本身不会阻断尝试。本次 Coding Plan 音频拒绝只是历史运行证据，没有改写插件权限或示例配置。
 
 GitHub Actions 的测试密钥只在 CI 中可用，不会复制到用户的 Harness。实际安装后的密钥应通过 Models 卡片或该 Harness 的启动环境提供。
 
@@ -19,11 +19,11 @@ GitHub Actions 的测试密钥只在 CI 中可用，不会复制到用户的 Har
 | 接缝 | 使用方式与边界 |
 | --- | --- |
 | `conversation.input.dock` | 追加一个 session 面板，不替换宿主附件栏或主输入草稿 |
-| `fileUpload.upload` | 直接传入原始 `File`，不解码图片、不压缩、不转码；上传凭证由宿主管理 |
+| `fileUpload.upload` | 直接传入原始 `File`，不解码图片、不压缩、不转码；上传凭证由宿主管理，`File.type` 不用于自动填写 MIME 草稿 |
 | `remote.commands.list/execute` | 检查 `ark-media` 的附件能力，发送 `file` receipt；命令负责准入与持久化 |
 | `modelDirectories` | 使用官方模型选择器共享状态，包括待生效选择；提交前再次确认未切换 |
 | `remote.llm` | 通过 `settingsNs` 判断路由是否属于本插件，不靠固定模型名或目录反馈作白名单 |
-| `media-declaration.ts` | UI 与命令共用显式 MIME／音频格式校验，保留扩展字段；不把旧模型格式当全局限制 |
+| `media-declaration.ts` | UI 与命令共用用户填写的 MIME／音频格式校验，保留扩展字段；协议格式推导不修改草稿，也不把旧模型格式当全局限制 |
 
 仅在新公共服务存在且 slot 可用时挂载。按钮还检查原文件上传可用、普通会话、已启用的方舟路由与命令存在；旧 npm 的文字及现有图片功能继续可用，没有增加新的硬依赖或精确版本锁。检查入口不会向方舟发送推理请求。
 

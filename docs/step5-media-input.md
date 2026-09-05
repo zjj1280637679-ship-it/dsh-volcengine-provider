@@ -6,7 +6,7 @@
 
 ## 最小使用流程
 
-1. 在方舟模型卡中强制开启需要的图片、视频或音频模态，并选择该方舟模型。
+1. 在 Models 中选择方舟模型。模态未设置／`inherit` 时保持未知并允许尝试，无需程序或用户先补出一张能力表；只有用户明确 `force_disable` 的模态会被阻断。
 2. 通过宿主支持的文件附件入口添加媒体，等待上传完成。
 3. 按附件顺序填写一个 MIME，使用 `/ark-media` 提交问题。例如先附加 MP4，再附加 MP3：
 
@@ -20,9 +20,9 @@
 /ark-media audio/x-custom=vendorformat -- 描述这段声音。
 ```
 
-格式覆盖只改变 `input_audio.format`，不改变字节，也不说明模型一定支持该格式。文件引用没有 MIME 信息，显式填写能避免按文件名猜测。普通图片引用则必须填写宿主准入后的 MIME；不匹配时命令会报告实际类型，仍保留原来的普通图片引用。插件不读取用户文本中的本地路径或附件句柄来寻找媒体。
+格式覆盖只改变本次请求的 `input_audio.format`，不改变字节，也不说明模型一定支持该格式。文件引用没有 MIME 信息，MIME 必须由用户填写，插件不根据文件名或浏览器 `File.type` 猜测。普通图片引用则必须填写宿主准入后的 MIME；不匹配时命令会报告实际类型，仍保留原来的普通图片引用。插件不读取用户文本中的本地路径或附件句柄来寻找媒体。
 
-命令仅在宿主同时提供公共 commands 服务和 `readFileStream` 方法时注册。这只能确认接口存在：新版附件基类的方法可能返回 `ATTACHMENT_FILES_UNSUPPORTED`，实际存储提供方不支持原文件时仍明确失败。提交时只接受当前选中的本插件方舟供应商；未选方舟、无法确认选中模型、附件与 MIME 数量不符、附件类型不符等情况应明确失败，不改选供应商或自动回退到按量通道。模态仍由模型卡的三态配置决定，命令不会自动开启它。
+命令仅在宿主同时提供公共 commands 服务和 `readFileStream` 方法时注册。这只能确认接口存在：新版附件基类的方法可能返回 `ATTACHMENT_FILES_UNSUPPORTED`，实际存储提供方不支持原文件时仍明确失败。提交时只接受当前选中的本插件方舟供应商；未选方舟、无法确认选中模型、附件与 MIME 数量不符、附件类型不符等情况应明确失败，不改选供应商或自动回退到按量通道。命令不会自动填写、开启或关闭模型模态；未设置允许尝试，只有模型卡中用户明确 `force_disable` 才阻断。
 
 ## 图片的两条链路
 
@@ -42,7 +42,7 @@
 | 视频 | `{"type":"video_url","video_url":{"url":"data:video/mp4;base64,…"}}` |
 | 音频 | `{"type":"input_audio","input_audio":{"data":"裸Base64","format":"mp3"}}` |
 
-音频此前写成 `audio` + `audio_url`，本步按 [方舟音频理解教程](https://docs.volcengine.com/docs/82379/2377589?lang=zh) 纠正为 `input_audio`；其中 `data` 是裸 Base64，不带 `data:audio/...;base64,` 前缀。已知 MIME 到格式标识的映射只提供便利，允许用户显式填写其他格式，不生成模型能力白名单。
+音频此前写成 `audio` + `audio_url`，本步按 [方舟音频理解教程](https://docs.volcengine.com/docs/82379/2377589?lang=zh) 纠正为 `input_audio`；其中 `data` 是裸 Base64，不带 `data:audio/...;base64,` 前缀。协议要求 `format` 时，序列化器可以从用户手动填写的 MIME 临时推导已知格式；用户仍可显式填写其他格式。推导结果只存在于本次请求，不回写模型配置或文件草稿，也不生成模型能力白名单。
 
 图片和视频使用 Data URL，分别依据 [图片理解](https://docs.volcengine.com/docs/82379/1362931?lang=zh) 与 [视频理解](https://docs.volcengine.com/docs/82379/1895586?lang=zh) 教程。默认编码不自行添加 `fps` 或图片 detail 参数；自定义请求体与 `encodeMediaPart` 扩展仍保留，参数是否被模型接受需实际请求确认。
 
@@ -79,7 +79,7 @@
 
 ## 保留 UI 扩展性
 
-内容构造与命令语法分离：`buildMediaContent(attachments, declarations, prompt?)` 接受结构化 MIME／音频 format 声明，`buildMediaCommandContent` 负责斜杠命令语法。后续 UI 可以直接调用纯构造函数，让每个附件独立显示 MIME 和音频格式选择，无需拼接命令字符串。模型卡仍拥有模态开启／关闭与高级请求体；输入控件只表示本次附件如何提交，不根据供应商反馈改写模型卡。
+内容构造与命令语法分离：`buildMediaContent(attachments, declarations, prompt?)` 接受结构化 MIME／音频 format 声明，`buildMediaCommandContent` 负责斜杠命令语法。后续 UI 可以直接调用纯构造函数，让每个附件独立显示 MIME 和音频格式选择，无需拼接命令字符串。模型卡仍拥有用户显式模态策略与高级请求体；输入控件只表示本次附件如何提交，不根据供应商反馈、运行结果或文件元数据改写模型卡。
 
 | 官方 slot | 可添加的未来 UI |
 | --- | --- |

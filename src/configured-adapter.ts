@@ -8,7 +8,6 @@ import {
 
 import { VolcengineChatAdapter, type VolcengineChatConnection } from './chat/adapter.js'
 import { type ModelCardConfig, type ResolvedRouteConfig, modelPolicy, parseModelBody } from './config.js'
-import { isModalityEnabled, MODALITIES } from './domain.js'
 import type { ResolveMediaBytes } from './chat/serialize.js'
 
 export interface ConfiguredAdapterOptions {
@@ -20,9 +19,9 @@ export interface ConfiguredAdapterOptions {
 function modelInfo(provider: string, id: string, card?: ModelCardConfig): LlmResolvedModelInfo {
   return {
     provider, id, name: card?.name?.trim() ? card.name : id,
-    ...(card === undefined ? {} : {
-      inputModalities: MODALITIES.filter(modality => isModalityEnabled(modelPolicy(card), modality)),
-    }),
+    // Harness treats inputModalities as a complete, closed capability set.
+    // Omitting it preserves "unknown" and avoids auto-filling or auto-denying
+    // modalities that the user has not configured.
     ...(card?.contextWindow === undefined ? {} : { context: { contextWindow: card.contextWindow } }),
     ...(card?.maxTokens === undefined ? {} : { defaultMaxTokens: card.maxTokens }),
   }
