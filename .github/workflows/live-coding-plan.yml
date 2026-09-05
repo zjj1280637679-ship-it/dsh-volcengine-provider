@@ -1,0 +1,42 @@
+name: Coding Plan live probe
+
+on:
+  push:
+    branches: [live-coding-plan-v0.1]
+    paths:
+      - .github/workflows/live-coding-plan.yml
+      - scripts/live-coding-plan.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check Coding Plan credential availability
+        env:
+          HAS_CODING_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY != '' }}
+        run: |
+          if [ "$HAS_CODING_KEY" != "true" ]; then
+            echo '::error::ARK_CODING_PLAN_API_KEY is not available to this workflow.'
+            exit 1
+          fi
+          echo 'ARK_CODING_PLAN_API_KEY: configured'
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run bounded live Coding Plan requests
+        env:
+          ARK_CODING_PLAN_API_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY }}
+        run: node scripts/live-coding-plan.mjs
