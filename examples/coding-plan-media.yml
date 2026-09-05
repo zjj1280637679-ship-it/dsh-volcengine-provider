@@ -1,0 +1,22 @@
+# 本次选定模型的最小配置示例；与 cordis.yml 二选一，勿重复加载插件。
+# 密钥由 Harness Models 卡片保存或启动环境提供，不写入此文件。
+# 普通 API 和 Agent Plan 卡片仍可继续配置；未列出的模型可在 UI 手动添加。
+- insert:
+    - id: llm-volcengine
+      name: dsh-volcengine-provider
+      config:
+        routes:
+          standard:
+            kind: standard
+          agent-plan:
+            kind: agent-plan
+          coding-plan:
+            kind: coding-plan
+            models:
+              - id: doubao-seed-2.0-lite
+                modalities:
+                  image: force_enable
+              - id: glm-5.3-flash
+                modalities:
+                  image: force_enable
+                  video: force_enable

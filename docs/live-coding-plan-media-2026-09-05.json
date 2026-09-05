@@ -1,0 +1,141 @@
+{
+  "cases": [
+    {
+      "bytes": 1848,
+      "bytesPreserved": true,
+      "completed": true,
+      "failure": {
+        "code": "MEDIA_CHECK_FAILED",
+        "message": "Check completion, semantic content and byte preservation separately."
+      },
+      "finish": {
+        "kind": "stop"
+      },
+      "fixture": "image.png",
+      "modality": "image",
+      "model": "doubao-seed-2.0-lite",
+      "ok": false,
+      "reasoningCharacters": 614,
+      "semanticMatch": false,
+      "sourceSha256": "2f5a55452df4dbde0bacbd30dc8449a75e70df4dd1da94e593f3a918a78d3e49",
+      "text": "There are two solid colored shapes in this image:\n1.  The shape on the left is a **bright red circle**.\n2.  The shape on the right is a **solid blue rectangle**.",
+      "usage": {
+        "cacheReadTokens": 0,
+        "inputTokens": 1345,
+        "outputTokens": 200,
+        "reasoningTokens": 158,
+        "totalTokens": 1545
+      },
+      "wireSha256": "2f5a55452df4dbde0bacbd30dc8449a75e70df4dd1da94e593f3a918a78d3e49"
+    },
+    {
+      "bytes": 27629,
+      "bytesPreserved": true,
+      "completed": false,
+      "failure": {
+        "code": "INVALID_REQUEST",
+        "message": "Volcengine Ark request failed: InvalidParameter BadRequest The parameter `messages.content.input_audio` specified in the request are not valid: audio input is not supported by this model. Request id: 0217886181212410477e7d991a1abd211e987ddddb28cabc9e95b (request 0217886181212410477e7d991a1abd211e987ddddb28cabc9e95b)"
+      },
+      "finish": null,
+      "fixture": "audio.mp3",
+      "modality": "audio",
+      "model": "doubao-seed-2.0-lite",
+      "ok": false,
+      "reasoningCharacters": 0,
+      "semanticMatch": false,
+      "sourceSha256": "d9820b8c930a0f68c291fc1b6a7c1a5df3985a6631ce676533bd02e5b61496be",
+      "text": "",
+      "wireSha256": "d9820b8c930a0f68c291fc1b6a7c1a5df3985a6631ce676533bd02e5b61496be"
+    },
+    {
+      "bytes": 1848,
+      "bytesPreserved": true,
+      "completed": true,
+      "finish": {
+        "kind": "stop"
+      },
+      "fixture": "image.png",
+      "modality": "image",
+      "model": "glm-5.3-flash",
+      "ok": true,
+      "reasoningCharacters": 474,
+      "semanticMatch": true,
+      "sourceSha256": "2f5a55452df4dbde0bacbd30dc8449a75e70df4dd1da94e593f3a918a78d3e49",
+      "text": "Based on the image, the two main shapes are:\n\n1. **A red circle** located on the left.\n2. **A blue square** located on the right.",
+      "usage": {
+        "cacheReadTokens": 0,
+        "inputTokens": 222,
+        "outputTokens": 147,
+        "reasoningTokens": 110,
+        "totalTokens": 369
+      },
+      "wireSha256": "2f5a55452df4dbde0bacbd30dc8449a75e70df4dd1da94e593f3a918a78d3e49"
+    },
+    {
+      "bytes": 2381,
+      "bytesPreserved": true,
+      "completed": true,
+      "finish": {
+        "kind": "stop"
+      },
+      "fixture": "video.mp4",
+      "modality": "video",
+      "model": "glm-5.3-flash",
+      "ok": true,
+      "reasoningCharacters": 295,
+      "semanticMatch": true,
+      "sourceSha256": "573ea1f96968c3f37fe12df641739d7cbfa5965f09b2864fae785a063b3bc2c6",
+      "text": "The video begins with a yellow screen from 00:00 to 00:01. Then, it transitions to a green screen from 00:02 to 00:03. Finally, the screen changes to purple from 00:04 to 00:05. Therefore, the temporal order of the main screen colors is yellow, green, purple.",
+      "usage": {
+        "cacheReadTokens": 0,
+        "inputTokens": 348,
+        "outputTokens": 158,
+        "reasoningTokens": 84,
+        "totalTokens": 506
+      },
+      "wireSha256": "573ea1f96968c3f37fe12df641739d7cbfa5965f09b2864fae785a063b3bc2c6"
+    }
+  ],
+  "credential": "configured",
+  "ok": false,
+  "requests": [
+    {
+      "contentType": "text/event-stream",
+      "method": "POST",
+      "modality": "image",
+      "model": "doubao-seed-2.0-lite",
+      "path": "/api/coding/v3/chat/completions",
+      "requestId": "0217886181152079ef299c750278aff859a2ad68462f46ad8229f",
+      "status": 200
+    },
+    {
+      "contentType": "application/json; charset=utf-8",
+      "method": "POST",
+      "modality": "audio",
+      "model": "doubao-seed-2.0-lite",
+      "path": "/api/coding/v3/chat/completions",
+      "requestId": "0217886181212410477e7d991a1abd211e987ddddb28cabc9e95b",
+      "status": 400
+    },
+    {
+      "contentType": "text/event-stream",
+      "method": "POST",
+      "modality": "image",
+      "model": "glm-5.3-flash",
+      "path": "/api/coding/v3/chat/completions",
+      "requestId": "0217886181220843587b81e5d6fed80d7b8fbd8e8cb3fa6b04703",
+      "status": 200
+    },
+    {
+      "contentType": "text/event-stream",
+      "method": "POST",
+      "modality": "video",
+      "model": "glm-5.3-flash",
+      "path": "/api/coding/v3/chat/completions",
+      "requestId": "021788618127495265c448ee6909a398288d07ae906a66b296754",
+      "status": 200
+    }
+  ],
+  "route": "https://ark.cn-beijing.volces.com/api/coding/v3",
+  "timestamp": "2026-09-05T14:21:53.658Z"
+}

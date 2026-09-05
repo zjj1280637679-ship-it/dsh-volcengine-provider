@@ -8,6 +8,8 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.1` 开�
 
 在 Harness 的 Models 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
 
+本次选定的 lite／flash 模型另有可直接使用的 [Coding Plan 最小媒体配置](examples/coding-plan-media.yml)：lite 图片、flash 图片与视频开启，其余仍可在 UI 编辑。
+
 | 通道 | 默认 API 地址 | 默认密钥引用 | Harness Provider ID |
 | --- | --- | --- | --- |
 | 普通 API | `https://ark.cn-beijing.volces.com/api/v3` | `ARK_STANDARD_API_KEY` | `volcengine-standard` |
@@ -50,10 +52,13 @@ dsh --profile web --patch ./examples/cordis.yml
 - Web 卡片使用官方 Models slot、settings 和 credentials Remote；支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
 - 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
 - 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。完整 Harness Web 安装后的人工验收仍需补齐。
+- 真实媒体测试中，flash 图片／视频通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。四项请求的媒体字节均保持一致，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
 
 媒体入口增加 `/ark-media video/mp4,audio/mpeg -- 提问`：先选择方舟模型并开启对应模态，附加文件，再按附件顺序填写 MIME。仅在宿主提供 commands 与原文件 `readFileStream` 时注册；采用能力检测，不按精确版本锁定。
 
-原文件图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。普通图片附件可能已被 Harness 规范化，**严格原图必须走官方 file upload 文件链**，目前没有新增原图上传按钮。npm `0.1.2-rc.1` 缺少原文件接口，固定 `0.1.3-alpha.1` 源码具备相关接缝；完整 Web 和真实方舟媒体链路仍未验收。使用方式、来源及 UI 扩展约定见 [第五步媒体输入](docs/step5-media-input.md)。
+在具备公共文件上传服务的 Harness 中，会话输入区新增**“方舟原始媒体”**：添加原图／音频／视频、确认可编辑 MIME 和可选音频格式即可发送。上传失败或取消保留当前草稿，支持复用已完成上传；不改变主输入草稿或自动切模型。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md)。
+
+原文件图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。普通图片附件可能已被 Harness 规范化，严格原图应使用上述原始媒体入口。npm `0.1.2-rc.1` 缺少原文件接口，不挂载新面板；固定 `0.1.3-alpha.1` 源码具备公共接口，插件按能力检测启用。完整 Harness Web 端到端仍未验收。协议与历史兼容细节见 [第五步媒体输入](docs/step5-media-input.md)。
 
 当前历史界面将专用媒体块显示为 JSON；会话导出不会自动携带这些块的媒体字节，同机共用原 `DSH_HOME` 可继续读取，但导出包尚不能保证移机完整重放。
 

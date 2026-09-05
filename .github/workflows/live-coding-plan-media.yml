@@ -1,12 +1,8 @@
 name: Coding Plan media probe
 
 on:
-  push:
-    branches: [media-live-v0.1]
-    paths:
-      - .github/workflows/live-coding-plan-media.yml
-      - scripts/live-coding-plan-media.mjs
-      - tests/fixtures/live-media/**
+  # Paid probes run only on explicit dispatch after this workflow reaches the
+  # default branch. The initial authorized run is linked in the evidence doc.
   workflow_dispatch:
 
 permissions:

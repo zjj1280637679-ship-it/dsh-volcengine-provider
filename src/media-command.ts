@@ -8,34 +8,10 @@ export type AdmittedMediaAttachment =
   | Extract<ContentBlock, { type: 'image' }>
   | { readonly type: 'file'; readonly attachment: VerbatimAttachmentRefLike }
 
-/** A grammar or attachment declaration the user can correct without resending bytes. */
-export class MediaCommandInputError extends Error {}
-
-/** Explicit per-attachment media choice shared by commands and future UI controls. */
-export interface MediaDeclaration {
-  readonly mediaType: string
-  readonly format?: string
-}
-
-interface ResolvedMediaDeclaration extends MediaDeclaration {
-  readonly modality: 'image' | 'video' | 'audio'
-}
-
-function declaration(value: MediaDeclaration): ResolvedMediaDeclaration {
-  const match = /^(image|video|audio)\/([a-z0-9!#$%&'*+.^_`|~-]+)$/iu.exec(value.mediaType.trim())
-  if (match === null || match[2] === '*') {
-    throw new MediaCommandInputError(`Invalid media declaration: ${value.mediaType}. Use an explicit image, video, or audio MIME type.`)
-  }
-  const modality = match[1]!.toLowerCase() as ResolvedMediaDeclaration['modality']
-  const mediaType = `${modality}/${match[2]!.toLowerCase()}`
-  if (value.format !== undefined && modality !== 'audio') {
-    throw new MediaCommandInputError('A format override is available only for audio, for example audio/x-custom=vendorformat.')
-  }
-  if (value.format !== undefined && !/^[a-z0-9!#$%&'*+.^_`|~-]+$/iu.test(value.format)) {
-    throw new MediaCommandInputError('Invalid media declaration: the audio format override must be a non-empty token.')
-  }
-  return { modality, mediaType, ...(value.format === undefined ? {} : { format: value.format }) }
-}
+import { MediaCommandInputError, resolveMediaDeclaration } from './media-declaration.js'
+import type { MediaDeclaration } from './media-declaration.js'
+export { MediaCommandInputError } from './media-declaration.js'
+export type { MediaDeclaration } from './media-declaration.js'
 
 /**
  * Construct native media content from explicit declarations and admitted attachments.
@@ -55,7 +31,7 @@ export function buildMediaContent(
   if (declarations.length !== attachments.length) {
     throw new MediaCommandInputError(`Declare one MIME type per attachment: received ${declarations.length} declarations for ${attachments.length} attachments.`)
   }
-  const resolved = declarations.map(declaration)
+  const resolved = declarations.map(resolveMediaDeclaration)
   const content = attachments.map((block, index): ContentBlock => {
     const declared = resolved[index]!
     if (block.type === 'image') {

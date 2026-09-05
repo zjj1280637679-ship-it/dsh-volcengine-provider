@@ -36,7 +36,9 @@ export async function runMediaProbe({ apiKey, fetchImpl = fetch }) {
     for (const token of sensitive) if (token) text = text.split(token).join('[REDACTED]')
     return text.replace(/data:[^\s"']+;base64,[a-z0-9+/=]+/giu, '[MEDIA]')
   }
-  const failure = error => ({ code: safe(error?.code ?? error?.name ?? 'ERROR').slice(0, 100), message: safe(error?.message ?? 'Request failed.').slice(0, 1000) })
+  // Adapter errors can already contain a truncated upstream body. Do not log
+  // that text: truncation may split a secret before exact-value redaction.
+  const failure = error => ({ code: safe(error?.code ?? error?.name ?? 'ERROR').slice(0, 100), message: 'The probe failed. See the request status and sanitized provider diagnostic, if available.' })
   const fixtures = new Map()
   try {
     const manifest = JSON.parse(await readFile(new URL('manifest.json', fixtureRoot), 'utf8'))
@@ -94,6 +96,17 @@ export async function runMediaProbe({ apiKey, fetchImpl = fetch }) {
         request.status = response.status
         request.contentType = response.headers.get('content-type')
         request.requestId = response.headers.get('x-request-id') ?? response.headers.get('x-tt-logid')
+        if (!response.ok) {
+          try {
+            const payload = await response.clone().json()
+            const diagnostic = payload?.error?.message
+            // Redact the full parsed message before truncating it. Never emit
+            // unstructured response bodies, headers or the media payload.
+            request.diagnostic = typeof diagnostic === 'string' ? safe(diagnostic).slice(0, 1000) : 'No structured provider diagnostic.'
+          } catch {
+            request.diagnostic = 'Unstructured provider error response omitted.'
+          }
+        }
         return response
       },
     })

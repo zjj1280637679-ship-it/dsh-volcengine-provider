@@ -59,3 +59,41 @@ it('registers after the real Models slot appears, restores after redeclaration a
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(0)
   } finally { await ctx.fiber.dispose() }
 })
+
+it('adds a separate media dock only when the optional public services exist and removes it on unload', async () => {
+  const ctx = new cordis.Context()
+  try {
+    const SlotRegistry = await registry()
+    await ctx.plugin(SlotRegistry).await()
+    ctx.provide('remote', {})
+    ctx.provide('remote.settings', {})
+    ctx.provide('remote.credentials', {})
+    const mounted = ctx.plugin(plugin)
+    await mounted.await()
+    const declare = () => ctx.slots.register({
+      name: 'root', children: {
+        'settings.models.provider-card': { kind: 'keyed', scope: 'root' },
+        'conversation.input.dock': { kind: 'list', scope: 'session' },
+      },
+    } as never, () => null)
+    const dispose = declare()
+    const mediaEntries = () => ctx.slots.entries('conversation.input.dock' as never)
+    expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
+    expect(mediaEntries()).toHaveLength(0)
+    ctx.provide('fileUpload', { available: true, upload() {} })
+    ctx.provide('remote.commands', { list() {}, execute() {} })
+    ctx.provide('remote.llm', { listConfigurableProviders() {}, listProviders() {} })
+    ctx.provide('modelDirectories', { directoryFor() {} })
+    ctx.provide('sessions', { scope() {}, subagentAddress() {} })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mediaEntries()).toHaveLength(1)
+    expect(mediaEntries()[0]!.options).toMatchObject({ id: 'volcengine-media', order: 30 })
+    expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
+    dispose()
+    expect(mediaEntries()).toHaveLength(0)
+    declare()
+    expect(mediaEntries()).toHaveLength(1)
+    await mounted.dispose()
+    expect(mediaEntries()).toHaveLength(0)
+  } finally { await ctx.fiber.dispose() }
+})
