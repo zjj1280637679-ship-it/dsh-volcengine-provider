@@ -45,6 +45,14 @@ try {
   assert.equal(Object.keys(plugin.resolveConfig({}).routes).length, 3)
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.dsh.client.platform, 'web')
+  for (const dependency of [
+    '@deepseek-ai/dsh-client-connection',
+    '@deepseek-ai/dsh-client-ui-settings-models',
+    '@deepseek-ai/dsh-client-ui-settings-plugins',
+    '@deepseek-ai/dsh-api-remotes',
+  ]) {
+    assert(manifest.dsh.client.inject.includes(dependency), `Missing client injection: ${dependency}`)
+  }
   const bundlePatch = await readFile(path.join(packageRoot, manifest.dsh.bundle.patch), 'utf8')
   assert.match(bundlePatch, /^\s*- insert:/m)
   assert.match(bundlePatch, /^\s+- id: llm-volcengine$/m)
@@ -64,7 +72,7 @@ try {
   })
   assert.equal(typeof browser.apply, 'function')
   assert(browser.inject.includes('slots'))
-  assert(browser.inject.includes('remote'))
+  assert.equal(browser.inject.length, 1, 'Client runtime must not require one version-specific settings transport')
   assert(!browser.inject.includes('remote.settings'))
   assert(!browser.inject.includes('remote.credentials'))
   assert.equal((await readdir(temporary)).filter(name => name.endsWith('.tgz')).length, 1)

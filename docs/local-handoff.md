@@ -17,13 +17,15 @@ pnpm run test:package
 npm pack
 ```
 
-完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.2` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.2.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务。
+完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.3` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.3.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务。
 
 ## 2. 确认宿主，再安装启用
 
 下列命令以电脑上已经安装、可运行的 Harness CLI `dsh` 为前提。
 
-原始媒体入口要求宿主提供公共文件上传、命令及附件 `readFileStream` 接口。已检查的源码基线是 Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`0.1.3-alpha.1`）；此前验证用的 npm `0.1.2-rc.1` 和兼容安装目标 `0.1.1-rc.2` 缺少这些原文件接口，不能据此验收媒体面板。`0.1.1-rc.2` 还没有新版 Models 扩展卡位，因此使用宿主自带的通用供应商行；插件按公共能力检测挂载，不按精确版本锁定，安装更高版本也不等于已通过兼容验收。
+原始媒体入口要求宿主提供公共文件上传、命令及附件 `readFileStream` 接口。已检查的源码基线是 Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`0.1.3-alpha.1`）；此前验证用的 npm `0.1.2-rc.1` 和兼容安装目标 `0.1.1-rc.2` 缺少这些原文件接口，不能据此验收媒体面板。`0.1.1-rc.2` 还没有新版 Models 扩展卡位，因此 Models 页使用宿主自带的通用供应商行，已配置通道的高级方舟表单在 Plugins 页挂载；插件按公共能力检测挂载，不按精确版本锁定，安装更高版本也不等于已通过兼容验收。
+
+Coding Plan 接入条件以[火山方舟 DeepSeek Harness 专项文档](https://console.volcengine.com/ark/region:cn-beijing/docs/82379/2637930?lang=zh)为准：本插件选择其列出的 OpenAI Chat Completions 协议、`https://ark.cn-beijing.volces.com/api/coding/v3` 与 `ark-code-latest`。不要把 Coding Plan 密钥改配到普通 `/api/v3`，否则会进入按量计费通道。
 
 需要从源码准备宿主时，按该版本的 [官方源码运行说明](https://github.com/deepseek-ai/deepseek-harness/blob/d347e703908d0406b7a7ef80e3a0e594d86b2215/README.zh.md) 构建。在宿主源码目录中执行安装／启动命令时用 `pnpm dsh`，并把下面插件包与 patch 的相对路径改为本机绝对路径。
 
@@ -31,7 +33,7 @@ npm pack
 
 ```powershell
 dsh --version
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.2.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.3.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -42,9 +44,9 @@ dsh --profile web
 
 也可锁定可信 commit 从 GitHub 安装；此时 `prepare` 会在本机执行构建，pnpm 10 及以上需要按 CLI 提示在目标 profile 的 `pnpm-workspace.yaml` 中明确授权该包。预编译 `.tgz` 不需要这项构建授权。
 
-## 3. 在 Models 中配置
+## 3. 在 Models / Plugins 中配置
 
-1. 打开对应方舟供应商卡片，在本机填写该通道 API Key；确认模型 ID，点击“保存方舟配置”。普通 API、Agent Plan、Coding Plan 的地址和凭据互相独立。
+1. 新版 Harness 在 Models 页打开对应方舟供应商卡片；`0.1.1-rc.2` 在 Plugins 页打开已配置通道的高级方舟卡片，Models 页仍用于查看和选择模型。在本机填写该通道 API Key，确认模型 ID，点击“保存方舟配置”。普通 API、Agent Plan、Coding Plan 的地址和凭据互相独立。
 2. 图片／视频／音频可保持“未设置”：它表示未知，允许尝试，不代表已知支持或不支持。只有用户明确选择 `force_disable` 才会因模态策略在本地阻断。
 3. 选择该模型后发送。目录反馈、模型名称及成功／失败结果都不能自动填写或修改模态。
 

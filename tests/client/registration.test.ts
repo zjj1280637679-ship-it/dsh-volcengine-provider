@@ -37,7 +37,6 @@ it('registers after the real Models slot appears, restores after redeclaration a
   try {
     const SlotRegistry = await registry()
     await ctx.plugin(SlotRegistry).await()
-    ctx.provide('remote', {})
     const mounted = ctx.plugin(plugin)
     await mounted.await()
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(0)
@@ -58,12 +57,49 @@ it('registers after the real Models slot appears, restores after redeclaration a
   } finally { await ctx.fiber.dispose() }
 })
 
+it('falls back to Plugins without requiring Remote and yields when Models appears', async () => {
+  const ctx = new cordis.Context()
+  try {
+    const SlotRegistry = await registry()
+    await ctx.plugin(SlotRegistry).await()
+    const mounted = ctx.plugin(plugin)
+    await mounted.await()
+    const declarePlugin = () => ctx.slots.register({
+      name: 'root', children: {
+        'settings.plugin.item': { kind: 'keyed', scope: 'root' },
+      },
+    } as never, () => null)
+    const disposePluginSeat = declarePlugin()
+    expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(0)
+    const entries = ctx.slots.entries('settings.plugin.item')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.options).toMatchObject({ key: 'llm-volcengine' })
+    disposePluginSeat()
+    expect(ctx.slots.entries('settings.plugin.item')).toHaveLength(0)
+    const disposeBothSeats = ctx.slots.register({
+      name: 'root', children: {
+        'settings.plugin.item': { kind: 'keyed', scope: 'root' },
+        'settings.models.provider-card': { kind: 'keyed', scope: 'root' },
+      },
+    } as never, () => null)
+    expect(ctx.slots.entries('settings.plugin.item')).toHaveLength(0)
+    expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
+    disposeBothSeats()
+    expect(ctx.slots.entries('settings.plugin.item')).toHaveLength(0)
+    expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(0)
+    const disposePluginSeatAgain = declarePlugin()
+    expect(ctx.slots.entries('settings.plugin.item')).toHaveLength(1)
+    disposePluginSeatAgain()
+    await mounted.dispose()
+    expect(ctx.slots.entries('settings.plugin.item')).toHaveLength(0)
+  } finally { await ctx.fiber.dispose() }
+})
+
 it('adds a separate media dock only when the optional public services exist and removes it on unload', async () => {
   const ctx = new cordis.Context()
   try {
     const SlotRegistry = await registry()
     await ctx.plugin(SlotRegistry).await()
-    ctx.provide('remote', {})
     const mounted = ctx.plugin(plugin)
     await mounted.await()
     const declare = () => ctx.slots.register({

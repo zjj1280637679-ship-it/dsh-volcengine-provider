@@ -1,12 +1,12 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.2` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.3` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
 ## 最小配置
 
-在 Harness 的 Models 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
+在新版 Harness 的 Models 设置页、或 `0.1.1-rc.2` 的 Plugins 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
 
 本次选定的 lite／flash 模型另有 [Coding Plan 最小媒体配置](examples/coding-plan-media.yml)。示例只填写用户选择的模型 ID，刻意不预填任何模态；未设置表示未知且允许尝试，不代表插件判断模型支持或不支持某种输入。
 
@@ -15,6 +15,8 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.2` 开�
 | 普通 API | `https://ark.cn-beijing.volces.com/api/v3` | `ARK_STANDARD_API_KEY` | `volcengine-standard` |
 | Agent Plan | `https://ark.cn-beijing.volces.com/api/plan/v3` | `ARK_AGENT_PLAN_API_KEY` | `volcengine-agent-plan` |
 | Coding Plan | `https://ark.cn-beijing.volces.com/api/coding/v3` | `ARK_CODING_PLAN_API_KEY` | `volcengine-coding-plan` |
+
+[火山方舟的 DeepSeek Harness 专项文档](https://console.volcengine.com/ark/region:cn-beijing/docs/82379/2637930?lang=zh)明确把 OpenAI Chat Completions、`/api/coding/v3` 和 `ark-code-latest` 列为 Coding Plan 的可用组合。Coding Plan 密钥不要配到普通 `/api/v3`：该地址属于按量计费通道，不会消耗 Coding Plan 套餐额度。
 
 三条通道分别保存地址、密钥引用和模型列表。适配器每次只发送一次请求，不内置重试或跨通道回退；上层 Harness 的重试策略仍由宿主管理。地址可以在高级配置中修改；表中地址是插件默认值，实际服务是否接受请求需真实联调确认。
 
@@ -40,7 +42,7 @@ pnpm run typecheck
 pnpm test
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.2.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.3.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -55,7 +57,7 @@ dsh --profile web
 
 - Chat adapter 仅实现 OpenAI-compatible Chat Completions，支持请求序列化、SSE 和非流式 JSON 回复、文本／推理／工具调用／用量转换；HTTP 错误保留结构化事实。Responses 与 Anthropic Messages 是不同 wire protocol，本版本不以换路径冒充支持。
 - Cordis 插件注册供应商目录、模型目录、设置 namespace 和凭据引用；保存配置与轮换密钥作用于后续请求。
-- Web 卡片使用官方 Models slot、settings 和 credentials Remote；支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
+- Web 卡片在新版宿主使用官方 Models slot 与 namespaced Remotes，在 `0.1.1-rc.2` 使用稳定的 Plugins slot 与 `connection.api`；两条路径共用同一表单，支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
 - 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
 - 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 又在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成了预编译包安装、自动激活、Web 配置、真实流式回复、重启持久化及最终包重装复验，见 [完整宿主闭环报告](docs/harness-web-loop-2026-09-06.md)。
 - 真实媒体测试中，flash 图片／视频通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。四项请求的媒体字节均保持一致，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
@@ -70,6 +72,6 @@ dsh --profile web
 
 当前历史界面将专用媒体块显示为 JSON；会话导出不会自动携带这些块的媒体字节，同机共用原 `DSH_HOME` 可继续读取，但导出包尚不能保证移机完整重放。
 
-源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.2` 额外兼容 Harness `0.1.1-rc.2` 的旧式 settings 接线：该宿主可用供应商、文本和普通图片链路，但没有新版 Models 扩展卡位与原文件读取接口，因此高级卡片和原始音视频面板不会挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
+源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.3` 额外兼容 Harness `0.1.1-rc.2`：Models 页保留宿主的通用供应商行，已配置通道的高级方舟卡片改在 Plugins 页挂载；供应商注册、热配置、凭据状态、文本和宿主标准图片链路均可用。该宿主没有原文件读取接口，因此原始图片／音频／视频面板仍不会挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
 
 设计资料：[第一阶段基本闭环](docs/phase1-basic-loop-2026-09-05.md) · [自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md) · [第五步媒体输入](docs/step5-media-input.md) · [完整宿主闭环](docs/harness-web-loop-2026-09-06.md)

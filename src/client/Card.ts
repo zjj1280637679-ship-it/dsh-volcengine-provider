@@ -1,17 +1,28 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
-import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { DEFAULT_ROUTES } from '../routes.js'
 import type { Modality, ModalityOverride } from '../domain.js'
-import type { CardOperations } from './operations.js'
+import type { CardOperations, SettingsNamespaceView } from './operations.js'
 import {
   parseCustomBody, routeAt, routeChanges, validateModels,
 } from './draft.js'
 import type { DraftModelCard, DraftRouteConfig } from './draft.js'
 
-type Props = PropsRuntime<'settings.models.provider-card'> & { operations: CardOperations }
+export interface ProviderCardDescriptor {
+  provider: string
+  displayName: string
+  settingsNs: string
+  settingsPath: readonly string[]
+  active?: boolean
+  declared?: boolean
+}
+
+export interface VolcengineCardProps {
+  provider: ProviderCardDescriptor
+  operations: CardOperations
+}
+
+type Props = VolcengineCardProps
 interface ModelDraft { value: DraftModelCard; body: string }
 
 const stack: CSSProperties = { display: 'grid', gap: '12px', minWidth: 0 }

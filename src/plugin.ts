@@ -1,7 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { attributionHeaders, LlmError, normalizeApiKey, type AdapterRegistrationHandle, type DirectoryRegistrationHandle } from '@deepseek-ai/dsh-llm'
+import {
+  attributionHeaders,
+  LlmError,
+  normalizeApiKey,
+  type AdapterRegistrationHandle,
+  type DirectoryRegistrationHandle,
+  type LlmModelDiscoveryRequest,
+} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-attachment'
 
@@ -78,6 +85,14 @@ function mediaResolver(ctx: Context): ResolveMediaBytes {
   }
 }
 
+/** rc.2 carries cancellation in the request; later hosts pass it beside the request. */
+export function modelDiscoverySignal(
+  request: LlmModelDiscoveryRequest,
+  legacySignal?: AbortSignal,
+): AbortSignal | undefined {
+  return legacySignal ?? (request as LlmModelDiscoveryRequest & { signal?: AbortSignal }).signal
+}
+
 /** Register the three configurable routes using the host's settings and credential seams. */
 export function apply(ctx: Context, config: Config = {}): void {
   const entry = resolveConfig(config)
@@ -148,7 +163,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   sync()
 
-  ctx.llm.registerModelDiscovery(SETTINGS_NS, async (draft, signal) => {
+  ctx.llm.registerModelDiscovery(SETTINGS_NS, async (
+    draft: LlmModelDiscoveryRequest,
+    legacySignal?: AbortSignal,
+  ) => {
+    const signal = modelDiscoverySignal(draft, legacySignal)
     if (draft.provider === undefined) throw new LlmError('Select a Volcengine route before refreshing its model feedback.', 'INVALID_REQUEST')
     const route = routeFor(draft.provider)
     const apiKey = draft.apiKey === undefined ? await resolveKey(route.apiKeyEnv) : draft.apiKey

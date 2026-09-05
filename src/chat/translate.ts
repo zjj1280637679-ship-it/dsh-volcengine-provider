@@ -4,7 +4,6 @@ import {
   type FinishReason,
   type StreamChunk,
   type TokenUsage,
-  type ToolCallId,
 } from '@deepseek-ai/dsh-llm'
 
 import { providerResponseError } from './errors.js'
@@ -25,8 +24,11 @@ interface OpenBlock {
   name?: string
 }
 
-function toolCallId(value: string): ToolCallId {
-  return value as ToolCallId
+/** Harness renamed this brand from ToolCallId to CallId without changing the block contract. */
+type CompatibleToolCallId = Extract<ContentBlock, { type: 'tool-call' }>['id']
+
+function toolCallId(value: string): CompatibleToolCallId {
+  return value as CompatibleToolCallId
 }
 
 export function mapFinishReason(reason: string): FinishReason {

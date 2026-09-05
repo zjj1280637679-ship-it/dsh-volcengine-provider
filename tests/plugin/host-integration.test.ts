@@ -52,10 +52,19 @@ function standard(baseURL: string): Config {
 }
 
 describe('Volcengine plugin in the public Harness runtime', () => {
+  it('accepts cancellation from the rc.2 request field and the later callback argument', () => {
+    const request = new AbortController().signal
+    const callback = new AbortController().signal
+    expect(VolcenginePlugin.modelDiscoverySignal({ signal: request } as never)).toBe(request)
+    expect(VolcenginePlugin.modelDiscoverySignal({} as never, callback)).toBe(callback)
+    expect(VolcenginePlugin.modelDiscoverySignal({ signal: request } as never, callback)).toBe(callback)
+    expect(VolcenginePlugin.modelDiscoverySignal({} as never)).toBeUndefined()
+  })
+
   it('uses the Harness 0.1.1 public settings seams when installSection is not a provider method', async () => {
     const fake = await server()
     enqueueCompletion(fake, 'legacy settings host')
-    const { ctx } = await boot(standard(fake.baseUrl), { key: 'legacy-key', legacySettings: true })
+    const { ctx, plugin } = await boot(standard(fake.baseUrl), { key: 'legacy-key', legacySettings: true })
 
     expect(ctx.settings.describe().map(descriptor => descriptor.ns)).toEqual([SETTINGS_NS])
     expect((await prompt(ctx)).at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } })
@@ -65,6 +74,11 @@ describe('Volcengine plugin in the public Harness runtime', () => {
     await expect(ctx.llm.listModels('volcengine-standard')).resolves.toEqual([
       expect.objectContaining({ id: 'legacy-edited' }),
     ])
+
+    await plugin.dispose()
+    expect(ctx.settings.describe().map(descriptor => descriptor.ns)).toEqual([])
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+    expect(ctx.llm.listProviders()).toEqual([])
   })
 
   it('registers three editable cards and reads manual model catalogs without credentials or network', async () => {

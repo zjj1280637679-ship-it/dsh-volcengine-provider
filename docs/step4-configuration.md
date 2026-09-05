@@ -35,14 +35,14 @@
 pnpm install --frozen-lockfile
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.1.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.3.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
 
 这些相对路径以当前仓库根目录为前提；在其他目录执行时改为绝对路径。`dsh plugin` 使用 pnpm 管理 profile 依赖，因而要求 pnpm 在 PATH 中。`web` profile 首次使用会按官方模板初始化。
 
-当前包导出宿主 `.` 入口、浏览器 `./client` 入口和 `./cordis.patch.yml`。浏览器产物以官方 `ModuleLoader` factory 格式注册，`dsh.client` 声明 Models 与 Remotes 客户端依赖；`dsh.bundle.patch` 让 `dsh plugin add` 自动把插件配置层加入 profile，Web 客户端随后发现其卡片。
+当前包导出宿主 `.` 入口、浏览器 `./client` 入口和 `./cordis.patch.yml`。浏览器产物以官方 `ModuleLoader` factory 格式注册，`dsh.client` 声明 Connection、Models、Plugins 与 Remotes 客户端依赖；`dsh.bundle.patch` 让 `dsh plugin add` 自动把插件配置层加入 profile，Web 客户端随后发现其卡片。
 
 安装包内的默认配置层为：
 
@@ -53,7 +53,7 @@ dsh --profile web
       config: {}
 ```
 
-随后启动 `dsh --profile web`，在 Models 页面完成密钥及模型配置。`config: {}` 使用三个默认卡片。若用户要覆盖配置，可在 profile 的 `cordis.patch.yml` 中重述完整 `llm-volcengine` 行，或使用一次性的 `--patch` overlay；后层按行替换，不会深度合并 `config`。
+随后启动 `dsh --profile web`：新版宿主在 Models 页面完成密钥及模型配置，`0.1.1-rc.2` 在 Plugins 页面使用同一组高级卡片并在 Models 页面选择模型。`config: {}` 使用三个默认卡片。若用户要覆盖配置，可在 profile 的 `cordis.patch.yml` 中重述完整 `llm-volcengine` 行，或使用一次性的 `--patch` overlay；后层按行替换，不会深度合并 `config`。
 
 如果偏好部署时只声明 Coding Plan，可以将该插件行的 `config` 改为：
 
@@ -94,9 +94,9 @@ customBody: |-
 
 ## UI 扩展协议
 
-使用官方 `settings.models.provider-card` slot，以 `llm-volcengine` namespace 注册一次。宿主通过 `provider.settingsNs` 和 `provider.settingsPath` 传入当前卡片地址；组件不按三个固定 Provider ID 分支。未来新增 `routes.experimental` 等配置项即可复用卡片，目前 UI 尚无“新建任意通道”按钮。
+在提供该卡位的新版宿主中，使用官方 `settings.models.provider-card` slot，以 `llm-volcengine` namespace 注册一次；宿主通过 `provider.settingsNs` 和 `provider.settingsPath` 传入当前卡片地址。`0.1.1-rc.2` 没有该 Models 卡位，插件改在稳定的 `settings.plugin.item` slot 注册一个 wrapper，由 wrapper 从已脱敏的 settings 描述中列出当前实际配置的 routes，不为部分 profile 制造不存在的卡片。未来新增任意动态 route 时，新版 Models 卡和 rc2 wrapper 都可复用，目前 UI 尚无“新建任意通道”按钮。
 
-浏览器组件只接收读取设置、描述凭据、保存设置、保存凭据的回调，具体操作由官方 Remotes 完成。保存设置带 namespace revision；发生并发冲突或服务错误时显示失败，用户可重新载入。
+浏览器组件只接收读取设置、描述凭据、保存设置、保存凭据的回调。新版宿主由官方 namespaced Remotes 完成，`0.1.1-rc.2` 由官方 `connection.api` 完成；两种路径的凭据读取都只返回配置状态，不返回值。保存设置带 namespace revision；发生并发冲突或服务错误时显示失败，用户可重新载入。
 
 官方 provider-card slot 是卡片附加区域，不能替换宿主原生表单。宿主面对未知 namespace 时仍可能显示通用高级设置提示或禁用的 Apply 按钮；本插件应使用**“保存方舟配置”**按钮提交。本步不通过修改宿主 DOM 隐藏这些控件。
 
