@@ -1,5 +1,6 @@
 export * from './domain.js'
 export * from './media.js'
+export * from './media-command.js'
 export * from './request-body.js'
 export * from './routes.js'
 export * from './transport.js'

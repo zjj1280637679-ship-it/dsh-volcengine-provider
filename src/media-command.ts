@@ -1,0 +1,195 @@
+import type { Context } from '@deepseek-ai/cordis'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+
+import type { VerbatimAttachmentRefLike } from './media.js'
+
+/** Attachments already admitted by the official Commands service, in input order. */
+export type AdmittedMediaAttachment =
+  | Extract<ContentBlock, { type: 'image' }>
+  | { readonly type: 'file'; readonly attachment: VerbatimAttachmentRefLike }
+
+/** A grammar or attachment declaration the user can correct without resending bytes. */
+export class MediaCommandInputError extends Error {}
+
+/** Explicit per-attachment media choice shared by commands and future UI controls. */
+export interface MediaDeclaration {
+  readonly mediaType: string
+  readonly format?: string
+}
+
+interface ResolvedMediaDeclaration extends MediaDeclaration {
+  readonly modality: 'image' | 'video' | 'audio'
+}
+
+function declaration(value: MediaDeclaration): ResolvedMediaDeclaration {
+  const match = /^(image|video|audio)\/([a-z0-9!#$%&'*+.^_`|~-]+)$/iu.exec(value.mediaType.trim())
+  if (match === null || match[2] === '*') {
+    throw new MediaCommandInputError(`Invalid media declaration: ${value.mediaType}. Use an explicit image, video, or audio MIME type.`)
+  }
+  const modality = match[1]!.toLowerCase() as ResolvedMediaDeclaration['modality']
+  const mediaType = `${modality}/${match[2]!.toLowerCase()}`
+  if (value.format !== undefined && modality !== 'audio') {
+    throw new MediaCommandInputError('A format override is available only for audio, for example audio/x-custom=vendorformat.')
+  }
+  if (value.format !== undefined && !/^[a-z0-9!#$%&'*+.^_`|~-]+$/iu.test(value.format)) {
+    throw new MediaCommandInputError('Invalid media declaration: the audio format override must be a non-empty token.')
+  }
+  return { modality, mediaType, ...(value.format === undefined ? {} : { format: value.format }) }
+}
+
+/**
+ * Construct native media content from explicit declarations and admitted attachments.
+ * Standard image references remain normalized images; file references remain verbatim.
+ * @param attachments - official host-admitted durable references in input order.
+ * @param declarations - one explicit MIME type and optional audio format per attachment.
+ * @param prompt - optional model-facing question.
+ * @returns media blocks followed by the prompt text, without reading or transforming bytes.
+ * @throws MediaCommandInputError for invalid MIME types, counts, or normalized-image declarations.
+ */
+export function buildMediaContent(
+  attachments: readonly AdmittedMediaAttachment[],
+  declarations: readonly MediaDeclaration[],
+  prompt?: string,
+): ContentBlock[] {
+  if (attachments.length === 0) throw new MediaCommandInputError('Attach at least one image, video, or audio file before submitting media.')
+  if (declarations.length !== attachments.length) {
+    throw new MediaCommandInputError(`Declare one MIME type per attachment: received ${declarations.length} declarations for ${attachments.length} attachments.`)
+  }
+  const resolved = declarations.map(declaration)
+  const content = attachments.map((block, index): ContentBlock => {
+    const declared = resolved[index]!
+    if (block.type === 'image') {
+      if (declared.mediaType !== block.attachment.mediaType) {
+        throw new MediaCommandInputError(`Image ${index + 1} was admitted as ${block.attachment.mediaType}; declare that MIME type. This reference is the host-normalized image, not an original file.`)
+      }
+      return block
+    }
+    if (declared.modality === 'image') {
+      return { type: 'volcengine-image', attachment: block.attachment, mediaType: declared.mediaType }
+    }
+    if (declared.modality === 'video') {
+      return { type: 'volcengine-video', attachment: block.attachment, mediaType: declared.mediaType }
+    }
+    return {
+      type: 'volcengine-audio', attachment: block.attachment, mediaType: declared.mediaType,
+      ...(declared.format === undefined ? {} : { format: declared.format }),
+    }
+  })
+  const text = prompt?.trim() ?? ''
+  if (text !== '') content.push({ type: 'text', text })
+  return content
+}
+
+/**
+ * Parse /ark-media arguments and reuse the structured media builder.
+ * @param rawInput - comma-separated MIME declarations, followed by ` -- ` and optional prompt text.
+ * @param attachments - official command-admitted durable references in input order.
+ * @returns the ordered native media content and optional text question.
+ * @throws MediaCommandInputError for invalid grammar or declarations.
+ */
+export function buildMediaCommandContent(
+  rawInput: string,
+  attachments: readonly AdmittedMediaAttachment[],
+): ContentBlock[] {
+  const match = /^\s*(.*?)\s+--(?:\s([\s\S]*))?$/u.exec(rawInput)
+  if (match === null) {
+    throw new MediaCommandInputError('Use /ark-media video/mp4,audio/mpeg -- your question, with one MIME type per attachment.')
+  }
+  const declarations = match[1]!.split(',').map((part): MediaDeclaration => {
+    const value = part.trim()
+    const separator = value.indexOf('=')
+    return separator === -1
+      ? { mediaType: value }
+      : { mediaType: value.slice(0, separator), format: value.slice(separator + 1) }
+  })
+  return buildMediaContent(attachments, declarations, match[2])
+}
+
+/** Structural public Agent face avoids requiring new Harness packages on the image-only baseline. */
+interface CommandAgent {
+  readonly session: {
+    requestHeader(): { readonly config: { readonly provider: string } } | undefined
+  }
+  steer(message: ReturnType<typeof createUserMessage>): void
+}
+
+interface MediaCommandInvocation {
+  readonly agent: CommandAgent
+  readonly rawInput: string
+  readonly attachments: readonly AdmittedMediaAttachment[]
+  readonly signal: AbortSignal
+}
+
+type MediaCommandResult = { readonly kind: 'success' } | { readonly kind: 'error'; readonly text: string }
+
+interface MediaCommandDefinition {
+  readonly name: string
+  readonly description: string
+  readonly input: { readonly hint: string; readonly attachments: true }
+  readonly handler: (invocation: MediaCommandInvocation) => MediaCommandResult
+}
+
+interface CommandsService {
+  register(definition: MediaCommandDefinition): () => void
+}
+
+interface ModelSelectionProjections {
+  stateOf(session: CommandAgent['session'], key: 'modelSelection'):
+    | { readonly pending: { readonly provider: string } | null }
+    | undefined
+}
+
+interface DefaultModelService {
+  currentSelection(): { readonly provider: string }
+}
+
+/**
+ * Read the public sources used by Session Controller's selectionFor() at d347e703,
+ * packages/api/session-controller/src/agent.ts: pending selection, request header,
+ * then the default model. Agent.options can predate a UI model switch.
+ */
+function selectedProvider(ctx: Context, agent: CommandAgent): string | undefined {
+  const projections = ctx.get('sessionProjections') as ModelSelectionProjections | undefined
+  const pending = projections?.stateOf(agent.session, 'modelSelection')?.pending
+  if (pending !== undefined && pending !== null) return pending.provider
+  const header = agent.session.requestHeader()
+  if (header !== undefined) return header.config.provider
+  const defaults = ctx.get('agentDefaultModel') as DefaultModelService | undefined
+  return defaults?.currentSelection().provider
+}
+
+/**
+ * Register /ark-media only while official Commands and verbatim file-read services exist.
+ * Cordis injection and effects own registration, replacement, and plugin disposal.
+ * @param ctx - owning provider-plugin context.
+ * @param isOwnedProvider - whether a selected route belongs to this plugin and is currently enabled.
+ */
+export function registerMediaCommand(ctx: Context, isOwnedProvider: (provider: string) => boolean): void {
+  ctx.inject(['commands', 'attachments'], (commandCtx) => {
+    const attachments = commandCtx.get('attachments') as { readonly readFileStream?: unknown } | undefined
+    if (typeof attachments?.readFileStream !== 'function') return
+    const commands = commandCtx.get('commands') as CommandsService
+    commandCtx.effect(() => commands.register({
+      name: 'ark-media',
+      description: 'Send attached media to the selected Volcengine model using explicit MIME types.',
+      input: { hint: 'video/mp4,audio/mpeg -- question', attachments: true },
+      handler: ({ agent, rawInput, attachments: admitted, signal }) => {
+        if (signal.aborted) return { kind: 'error', text: 'Media submission was cancelled before delivery.' }
+        const provider = selectedProvider(commandCtx, agent)
+        if (provider === undefined) return { kind: 'error', text: 'The current model selection is unavailable. Select a Volcengine model before using /ark-media.' }
+        if (!isOwnedProvider(provider)) return { kind: 'error', text: 'Select an enabled Volcengine provider before using /ark-media. This command does not change the selected model.' }
+        let content: ContentBlock[]
+        try {
+          content = buildMediaCommandContent(rawInput, admitted)
+        } catch (error) {
+          if (error instanceof MediaCommandInputError) return { kind: 'error', text: error.message }
+          throw error
+        }
+        // No await separates the last cancellation check from the durable Agent submission.
+        if (signal.aborted) return { kind: 'error', text: 'Media submission was cancelled before delivery.' }
+        agent.steer(createUserMessage({ content, source: { kind: 'user' } }))
+        return { kind: 'success' }
+      },
+    }))
+  })
+}

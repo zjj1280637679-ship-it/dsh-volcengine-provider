@@ -116,7 +116,7 @@ pnpm run test:package
 
 本地验证包括：三通道路径和凭据隔离、未知模型与自定义参数、媒体字节一致性、Chat 流翻译、公开 Cordis/LLM 运行时注册与热更新、Loader/Include 配置组合、卡片编辑和未知字段保存。宿主集成使用测试内存 settings／credentials 提供方；Loader 测试映射模块到源码；卡片测试使用 DOM 环境并验证官方 SlotRegistry 的注册／卸载。`test:package` 打包、解包并检查宿主导出、浏览器 ModuleLoader factory、类型声明和包内容，复用当前安装的 peer 依赖；这些验证不等于真实方舟或完整 Harness Web profile 启动验收。
 
-图片通过宿主 `attachments.readImage` 读取。视频／音频使用插件内容块扩展和可选 `readFileStream` 原文件读取接口；当前 npm 附件服务没有后者，缺少时返回 `MEDIA_RESOLVER_UNAVAILABLE`。聊天视频／音频上传及内容块构造入口仍需后续接入。适配器已有原字节透传验证，但不能据此宣称端到端视频／音频理解已经可用。
+第四步仅具备媒体读取扩展；[第五步](step5-media-input.md)进一步添加显式 MIME 的 `/ark-media` 输入命令、原图文件块和正确的 Chat 音频编码。命令按 commands 与 `readFileStream` 公共能力存在与否注册；npm `0.1.2-rc.1` 仍缺少原文件接口。普通图片经 `readImage` 读取时可能已被宿主规范化，严格原图需官方 file upload 文件链。原字节透传的本地验证不能替代完整 Web 或真实媒体 API 验收。
 
 本次无真实 API 密钥，未发送真实方舟请求；套餐权限、模型 ID、媒体 wire 形式和服务实际行为仍待最小真实冒烟验证。当前保留 `private: true`，不进行 npm 发布或正式 Release。
 

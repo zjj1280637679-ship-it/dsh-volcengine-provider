@@ -103,7 +103,9 @@ HTTP 失败使用 Harness 公共机器码（如 `AUTH / RATE_LIMIT / QUOTA / INV
 
 - image → `image_url`
 - video → `video_url`
-- audio → `audio` + `audio_url`
+- audio → `input_audio` + `input_audio.data`（裸 Base64）+ `input_audio.format`
+
+音频形状在[第五步](step5-media-input.md)核对官方 Chat 教程后纠正；第三步原先的 `audio` / `audio_url` 编码不能作为当前协议依据。
 
 Provider 只进行透明 data URL/base64 封装，不做压缩、抽帧、转码或降采样。
 

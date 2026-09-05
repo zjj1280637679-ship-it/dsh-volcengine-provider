@@ -11,7 +11,7 @@ import {
   type ModelConfig,
   type Modality,
 } from '../domain.js'
-import { toVerbatimDataUrl } from '../media.js'
+import { audioFormatOf, toVerbatimDataUrl } from '../media.js'
 import {
   composeRequestBody,
   type RequestBody,
@@ -26,6 +26,7 @@ import type {
 
 export type MediaInputBlock =
   | Extract<ContentBlock, { type: 'image' }>
+  | Extract<ContentBlock, { type: 'volcengine-image' }>
   | Extract<ContentBlock, { type: 'volcengine-video' }>
   | Extract<ContentBlock, { type: 'volcengine-audio' }>
 
@@ -52,7 +53,7 @@ function blockType(block: ContentBlock): string {
 }
 
 function modalityOf(block: MediaInputBlock): Modality {
-  if (block.type === 'image') return 'image'
+  if (block.type === 'image' || block.type === 'volcengine-image') return 'image'
   if (block.type === 'volcengine-video') return 'video'
   return 'audio'
 }
@@ -67,13 +68,18 @@ export function defaultEncodeMediaPart(
   block: MediaInputBlock,
   dataUrl: string,
 ): WireUserPart {
-  if (block.type === 'image') {
+  if (block.type === 'image' || block.type === 'volcengine-image') {
     return { type: 'image_url', image_url: { url: dataUrl } }
   }
   if (block.type === 'volcengine-video') {
     return { type: 'video_url', video_url: { url: dataUrl } }
   }
-  return { type: 'audio', audio_url: dataUrl }
+  // Chat uses bare base64 plus a format declaration. Responses uses a data
+  // URL in a different field; never mix those two wire protocols.
+  return {
+    type: 'input_audio',
+    input_audio: { data: dataUrl.slice(dataUrl.indexOf(',') + 1), format: audioFormatOf(block) },
+  }
 }
 
 function flattenText(blocks: readonly ContentBlock[]): string {
@@ -155,6 +161,7 @@ async function contentParts(
         if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
         break
       case 'image':
+      case 'volcengine-image':
       case 'volcengine-video':
       case 'volcengine-audio':
         parts.push(await encodeMedia(block, config, options, signal))

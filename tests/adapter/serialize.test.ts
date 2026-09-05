@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 
 import { createDefaultModelConfig } from '../../src/domain.js'
-import { parseVerbatimDataUrl, sha256Hex } from '../../src/media.js'
+import { decodeVerbatimBase64, parseVerbatimDataUrl, sha256Hex } from '../../src/media.js'
 import { serializeChatRequest } from '../../src/chat/serialize.js'
 
 type LooseMessage = Omit<Message, 'id' | 'source'> & { id: string; source: { kind: 'user' } }
@@ -125,13 +125,18 @@ describe('step 3 serializer', () => {
     const urls = [
       (parts[1]!.image_url as { url: string }).url,
       (parts[2]!.video_url as { url: string }).url,
-      parts[3]!.audio_url as string,
     ]
     const expected = [imageBytes, videoBytes, audioBytes]
     for (const [index, url] of urls.entries()) {
       const parsed = parseVerbatimDataUrl(url!)
       expect(sha256Hex(parsed.data)).toBe(sha256Hex(expected[index]!))
     }
+    expect(parts[3]).toEqual({
+      type: 'input_audio',
+      input_audio: { data: Buffer.from(audioBytes).toString('base64'), format: 'wav' },
+    })
+    const audio = parts[3]!.input_audio as { data: string }
+    expect(sha256Hex(decodeVerbatimBase64(audio.data))).toBe(sha256Hex(audioBytes))
   })
 
   it('honors explicit local disable without consulting supplier feedback', async () => {

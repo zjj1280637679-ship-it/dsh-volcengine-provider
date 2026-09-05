@@ -10,6 +10,7 @@ import { ConfiguredVolcengineAdapter } from './configured-adapter.js'
 import { discoverModels } from './chat/discovery.js'
 import type { ResolveMediaBytes } from './chat/serialize.js'
 import type { VerbatimAttachmentRefLike } from './media.js'
+import { registerMediaCommand } from './media-command.js'
 
 export { Config } from './config.js'
 export const name = SETTINGS_NS
@@ -27,7 +28,7 @@ function mediaResolver(ctx: Context): ResolveMediaBytes {
     if (block.type === 'image') return (await attachments.readImage(block.attachment, signal)).data
     const files = attachments as typeof attachments & Partial<VerbatimFileReader>
     if (typeof files.readFileStream !== 'function') {
-      throw new LlmError('This Harness attachment provider cannot read original video/audio files.', 'MEDIA_RESOLVER_UNAVAILABLE')
+      throw new LlmError('This Harness attachment provider cannot read original media files.', 'MEDIA_RESOLVER_UNAVAILABLE')
     }
     const chunks: Uint8Array[] = []
     for await (const chunk of files.readFileStream(block.attachment, signal)) {
@@ -65,6 +66,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   let directory: DirectoryRegistrationHandle | undefined
   let ownedProviders = new Set<string>()
   let ownedDirectory = new Set<string>()
+  registerMediaCommand(ctx, provider => ownedProviders.has(provider))
   const entriesFor = (value: ResolvedConfig) => Object.entries(value.routes).map(([key, route]) => ({
     provider: providerId(key), displayName: route.name, settingsNs: SETTINGS_NS,
     settingsPath: ['routes', key],
