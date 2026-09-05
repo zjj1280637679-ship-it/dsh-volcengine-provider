@@ -49,7 +49,7 @@ dsh --profile web --patch ./examples/cordis.yml
 - Cordis 插件注册供应商目录、模型目录、设置 namespace 和凭据引用；保存配置与轮换密钥作用于后续请求。
 - Web 卡片使用官方 Models slot、settings 和 credentials Remote；支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
 - 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
-- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。真实方舟 API 未测试，完整 Harness Web 安装后的人工验收仍需补齐。
+- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。完整 Harness Web 安装后的人工验收仍需补齐。
 
 媒体入口增加 `/ark-media video/mp4,audio/mpeg -- 提问`：先选择方舟模型并开启对应模态，附加文件，再按附件顺序填写 MIME。仅在宿主提供 commands 与原文件 `readFileStream` 时注册；采用能力检测，不按精确版本锁定。
 
