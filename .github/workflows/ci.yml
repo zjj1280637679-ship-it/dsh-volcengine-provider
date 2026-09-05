@@ -24,10 +24,13 @@ jobs:
         run: corepack enable
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Freedom + Fake Ark + Adapter tests
+      - name: Freedom + Fake Ark + Adapter + Host + UI tests
         run: pnpm test:ci
+
+      - name: Build and verify installation package
+        run: pnpm build && pnpm test:package

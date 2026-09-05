@@ -149,6 +149,9 @@ async function contentParts(
   for (const block of blocks) {
     switch (block.type) {
       case 'text':
+        if (block.text.length > 0 && !isModalityEnabled(config, 'text')) {
+          throw new LlmError('Text input is disabled by the local model-card policy.', 'MODALITY_DISABLED')
+        }
         if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
         break
       case 'image':

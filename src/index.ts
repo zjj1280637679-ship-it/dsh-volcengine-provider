@@ -12,3 +12,7 @@ export * from './chat/serialize.js'
 export * from './chat/sse.js'
 export * from './chat/translate.js'
 export * from './chat/types.js'
+
+export * from './config.js'
+export * from './configured-adapter.js'
+export { name, inject, apply } from './plugin.js'

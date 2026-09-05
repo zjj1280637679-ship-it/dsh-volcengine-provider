@@ -1,105 +1,58 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟 LLM Provider 插件（开发中）。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.1` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
 
-## 立意
+**建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
-**建设积极自由，同时不干涉消极自由。**
+## 最小配置
 
-插件应尽可能帮助用户发现模型、展示供应商反馈、构造多模态请求和兼容不同方舟通道；但供应商反馈、插件内置知识和历史测试结果都不得自动成为配置、权限或调用限制。
+在 Harness 的 Models 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
 
-换句话说：**知识用于辅助选择，不用于封锁实验空间。**
+| 通道 | 默认 API 地址 | 默认密钥引用 | Harness Provider ID |
+| --- | --- | --- | --- |
+| 普通 API | `https://ark.cn-beijing.volces.com/api/v3` | `ARK_STANDARD_API_KEY` | `volcengine-standard` |
+| Agent Plan | `https://ark.cn-beijing.volces.com/api/plan/v3` | `ARK_AGENT_PLAN_API_KEY` | `volcengine-agent-plan` |
+| Coding Plan | `https://ark.cn-beijing.volces.com/api/coding/v3` | `ARK_CODING_PLAN_API_KEY` | `volcengine-coding-plan` |
 
-## v0.1 目标
+三条通道分别保存地址、密钥引用和模型列表。适配器每次只发送一次请求，不内置重试或跨通道回退；上层 Harness 的重试策略仍由宿主管理。地址可以在高级配置中修改；表中地址是插件默认值，实际服务是否接受请求需真实联调确认。
 
-- 三条独立 Route：普通方舟、Agent Plan、Coding Plan。
-- 文本 / 图片 / 视频 / 音频输入能力可分别配置，并允许 `force_enable` 强制测试。
-- 模型即使未声明或声明不支持某模态，也不得因插件判断而被阻止测试。
-- 媒体默认 passthrough：不压缩、不抽帧、不转码、不降采样；Agent 自己决定是否处理。
-- 模型卡支持自定义请求体；未知字段不得被插件过滤。
-- 思考模式不在对话界面做统一开关，由模型卡自定义请求体表达。
-- 火山返回的丰富模型信息兼容展示和缓存，但只属于 Feedback，不自动修改 Config。
-- 禁止三条 Route 之间的隐式 fallback，避免套餐与按量计费串线。
+每个模型的高级配置包括：
 
-## 默认 OpenAI 兼容 Route
+- 文本、图片、视频、音频三态开关：继承、强制开启、强制关闭；继承时文本开启，其余关闭。
+- 自定义请求体 JSON：`merge` 合并、`patch` 以 `null` 删除字段、`raw` 完整替换；未知 JSON 字段保留。
+- 可选显示名称、上下文容量和输出上限；不根据供应商反馈自动填写容量。
 
-| Route | Base URL |
-| --- | --- |
-| Standard Ark | `https://ark.cn-beijing.volces.com/api/v3` |
-| Agent Plan | `https://ark.cn-beijing.volces.com/api/plan/v3` |
-| Coding Plan | `https://ark.cn-beijing.volces.com/api/coding/v3` |
+思考模式在模型的自定义请求体中设置，不新增对话界面的统一思考开关。通道和模型中已有的普通未知配置字段会保留，便于继续增加 UI 控件。请求体通过 JSON 文本保存，避免宿主设置对象合并改写特殊字段；详见 [第四步说明](docs/step4-configuration.md)。
 
-这些 URL 是默认值，不是硬编码权限边界；后续模型卡/Route 配置仍应允许显式自定义。
+## 本地构建与安装
 
-## 信息分层
+需要 Node.js `^22.19.0 || >=24.0.0`、本仓库声明的 pnpm，以及已安装的 Harness CLI。
 
-```text
-Model
-├─ Feedback      # 供应商告诉我们的，只读参考
-├─ Config        # 用户明确设置的
-├─ Observations  # 实际调用得到的历史事实
-└─ Effective     # 本次最终请求
+```sh
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm run build
+npm pack
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.1.tgz
+dsh --profile web --patch ./examples/cordis.yml --dump-config
+dsh --profile web --patch ./examples/cordis.yml
 ```
 
-`Feedback -> Config` 禁止自动写穿。
+以上命令在本仓库根目录执行。包提供宿主入口 `dist/index.js` 和浏览器入口 `dist/client.js`；`dsh.client` 让 Web 宿主加载卡片。当前包没有 `dsh.bundle`：安装只添加依赖，需通过上述 patch 启用。长期使用可将 [examples/cordis.yml](examples/cordis.yml) 的条目追加到 `$DSH_HOME/profiles/web/cordis.patch.yml` 的 YAML 数组，然后使用 `dsh --profile web` 启动。
 
-## Harness 兼容基线
+这是本地 alpha 包验证流程；`private: true` 保留，尚未发布 npm 或正式 Release。前置开发工作仍在草稿 PR 链上，不应把默认分支当成完整安装版本。
 
-源码目标基线：DeepSeek Harness `d347e703908d0406b7a7ef80e3a0e594d86b2215`（dsh `0.1.3-alpha.1`）。
+## 已实现与验证边界
 
-由于该源码版本尚未同步发布全部 npm 包，当前 CI 可安装基线使用 `@deepseek-ai/dsh-llm@0.1.2-rc.1`，并保留对 `0.1.3-alpha.1` 的 peer 兼容声明。
+- Chat adapter 支持请求序列化、SSE 和非流式 JSON 回复、文本／推理／工具调用／用量转换；HTTP 错误保留结构化事实。
+- Cordis 插件注册供应商目录、模型目录、设置 namespace 和凭据引用；保存配置与轮换密钥作用于后续请求。
+- Web 卡片使用官方 Models slot、settings 和 credentials Remote；支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
+- 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
+- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。真实方舟 API 未测试，完整 Harness Web 安装后的人工验收仍需补齐。
 
-Provider 按 Harness 官方 `LlmAdapter.stream()` / `ctx.llm.registerAdapter()` 契约演进。
+媒体在适配器边界按原字节编码，不压缩、不抽帧、不转码。视频／音频的配置、内容块和字节解析扩展已具备，但当前 npm Harness 附件服务缺少 `readFileStream`，且本插件尚未增加聊天视频／音频上传入口，因此**不代表视频／音频已能从聊天 UI 完整送达方舟**。缺少附件能力时会明确报错，强制开启模态不会补造宿主能力。
 
-## 当前进度
+源码设计基线为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)；本地可安装组件验证使用 `0.1.2-rc.1`。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
 
-### 第一步：自由度合同与核心类型 ✅
-
-- Feedback / Config / Observations / Effective 四层分离；
-- 模态 `force_enable` / `force_disable`；
-- custom body `merge` / `patch` / `raw`；
-- 三 Route 默认配置；
-- 第一组 freedom tests；
-- 复查并修复默认 Route 可被调用方污染、`__proto__` 等合法未知 JSON 字段不能可靠透传的问题。
-
-### 第二步：Fake Ark 验证环境 ✅
-
-- 单次、无隐式 retry/fallback 的 HTTP transport；
-- Fake Ark 本地请求捕获服务器；
-- 三 Route path / credential 隔离测试；
-- unknown model id / unknown request body 直达测试；
-- image / video / audio `force_enable` 直达测试；
-- 二进制与 base64/data URL 的 SHA-256 passthrough 测试；
-- DSH `ContentBlockMap` / `ModelModalityMap` 的视频、音频扩展类型。
-
-### 第三步：生产 Chat Adapter ✅
-
-当前 `adapter-v0.1` 分支已经实现并通过 Fake Ark 验证：
-
-- `GenerateOptions` → OpenAI-compatible Ark Chat 请求；
-- SSE framing、`[DONE]`、reasoning/text/tool-call/usage → `StreamChunk`；
-- `stream:false` 自定义请求体仍能走完整 JSON Chat 响应；
-- Coding Plan 429 仍只有一次 HTTP 尝试，不发生跨 Route fallback；
-- HTTP 失败保留 Harness 公共机器码以及 `status / requestId / Retry-After` 结构化事实；
-- `/models` 仅把 `id/name/description` 投影到 advisory catalog，其他丰富字段完整保留为 Raw Feedback；
-- Feedback 不生成 `inputModalities/context/reasoning` 等 Harness 限制；
-- image / video / audio 只做 Provider 边界透明编码，不压缩、不抽帧、不转码；
-- npm 可安装基线 `@deepseek-ai/dsh-llm@0.1.2-rc.1` typecheck 通过；
-- 当前总门禁：**8 个测试文件、29 个测试，29/29 通过**。
-
-第三步详细设计与验收见 [`docs/step3-adapter-plan.md`](docs/step3-adapter-plan.md)。
-验证环境见 [`docs/verification-environment.md`](docs/verification-environment.md)。
-总设计合同见 [`docs/design-contract.md`](docs/design-contract.md)。
-
-## 测试策略
-
-```text
-tests/
-├─ unit/        # 纯逻辑测试
-├─ fake-ark/    # 本地假方舟，检查最终 HTTP/媒体字节
-├─ freedom/     # 不削减实验空间的核心验收
-├─ adapter/     # Chat adapter 序列化/流翻译/Fake Ark E2E
-└─ live/        # 真实火山 Smoke/E2E（后续）
-```
-
-真实测试密钥只从环境变量 / GitHub Actions Secrets 读取，不进入仓库。
+设计资料：[自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md)
