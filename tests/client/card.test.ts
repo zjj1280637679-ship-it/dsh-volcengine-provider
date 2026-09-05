@@ -296,6 +296,21 @@ describe('Volcengine Models card', () => {
     }] }])
   })
 
+  it('shows and saves the tool-result-only agent media continuation budget', async () => {
+    const fixture = setup()
+    await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
+    expect(input('智能体媒体续链预算').value).toBe('45')
+    expect(container.textContent).toContain('仅作用于 tool-result 中的图片和视频')
+    expect(container.textContent).toContain('只从本次模型请求省略，不删除原文件')
+    expect(container.textContent).toContain('0 表示关闭此降级')
+    await change('API Key', 'temporary-test-key')
+    await change('智能体媒体续链预算', '12.5')
+    await click('保存方舟配置')
+    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+      id: 'my-model', futureModelOption: { keep: true }, agentMediaFallbackMB: 12.5,
+    }] }])
+  })
+
   it('preserves already stored inherit fields when the user does not edit them', async () => {
     const fixture = setup()
     fixture.readView().value = { routes: { standard: {

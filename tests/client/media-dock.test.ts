@@ -103,3 +103,44 @@ it('keeps the media action disabled when unavailable and does not inspect subage
   expect(ops.check).not.toHaveBeenCalled()
   expect(button('重新检查').disabled).toBe(true)
 })
+
+it('labels and constrains the loopback path as one unmodified original MP4', async () => {
+  const ops = operations()
+  Object.assign(ops, {
+    mode: 'loopback-video', maxFiles: 1,
+    validate: vi.fn((items: { file: File; mediaType: string }[]) => {
+      if (items.length !== 1 || items[0]?.mediaType !== 'video/mp4') throw new Error('only video/mp4')
+    }),
+  })
+  await act(async () => root.render(createElement(MediaDock, { operations: ops, session })))
+  expect((container.querySelector('details[aria-label="火山方舟原始媒体"]') as HTMLDetailsElement).open).toBe(true)
+  expect(container.textContent).toContain('不抽帧、不转码、不修改字节')
+  expect(container.textContent).toContain('不受插件文件大小阈值阻断')
+  expect(container.textContent).toContain('保留真实 API 错误')
+  const picker = container.querySelector('input[type=file]') as HTMLInputElement
+  expect(picker.multiple).toBe(false)
+  expect(picker.accept).toBe('video/mp4')
+  expect(button('选择原始 MP4')).toBeTruthy()
+  await files(new File(['first'], 'first.mp4'), new File(['second'], 'second.mp4'))
+  expect(container.textContent).toContain('first.mp4')
+  expect(container.textContent).not.toContain('second.mp4')
+  expect(button('发送媒体').disabled).toBe(true)
+  await change('文件 1 MIME 类型', 'video/mp4')
+  expect(button('发送媒体').disabled).toBe(false)
+})
+
+it('does not impose a plugin size gate on a user-selected original video', async () => {
+  const ops = operations()
+  Object.assign(ops, {
+    mode: 'loopback-video', maxFiles: 1,
+    validate: vi.fn((items: { file: File; mediaType: string }[]) => {
+      if (items.length !== 1 || items[0]?.mediaType !== 'video/mp4') throw new Error('only video/mp4')
+    }),
+  })
+  await act(async () => root.render(createElement(MediaDock, { operations: ops, session })))
+  const large = new File(['original'], 'large.mp4')
+  Object.defineProperty(large, 'size', { value: 51 * 1024 * 1024 })
+  await files(large)
+  await change('文件 1 MIME 类型', 'video/mp4')
+  expect(button('发送媒体').disabled).toBe(false)
+})

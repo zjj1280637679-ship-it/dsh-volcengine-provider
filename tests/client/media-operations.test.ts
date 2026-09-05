@@ -4,7 +4,7 @@ import type { MediaDirectoryState, MediaServices } from '../../src/client/media-
 
 function setup() {
   let generation = 0
-  let state: MediaDirectoryState = { current: { provider: 'user-route', model: 'unlisted-model' }, routable: true }
+  let state: MediaDirectoryState = { current: { provider: 'volcengine-user-route', model: 'unlisted-model' }, routable: true }
   const selectionListeners = new Set<() => void>()
   const generationListeners = new Set<() => void>()
   const services: MediaServices = {
@@ -12,10 +12,6 @@ function setup() {
     commands: {
       list: vi.fn<MediaServices['commands']['list']>(async () => ({ ok: true, value: [{ name: 'ark-media', input: { attachments: true } }] })),
       execute: vi.fn<MediaServices['commands']['execute']>(async () => ({ ok: true, value: { result: { kind: 'success' } } })),
-    },
-    llm: {
-      listConfigurableProviders: vi.fn<MediaServices['llm']['listConfigurableProviders']>(async () => ({ ok: true, value: [{ provider: 'user-route', settingsNs: 'llm-volcengine' }] })),
-      listProviders: vi.fn<MediaServices['llm']['listProviders']>(async () => ({ ok: true, value: [{ id: 'user-route' }] })),
     },
     directory: { store: {
       getSnapshot: () => state,
@@ -47,8 +43,6 @@ describe('original media public-service bridge', () => {
     const signal = new AbortController().signal
     await fixture.operations.send(files, 'Question -- still plain text', signal, () => {})
     // Generated Remotes enforce arity; only execute declares a cancellation parameter.
-    expect(fixture.services.llm.listConfigurableProviders).toHaveBeenCalledWith()
-    expect(fixture.services.llm.listProviders).toHaveBeenCalledWith()
     expect(fixture.services.commands.list).toHaveBeenCalledWith('session-a')
     const calls = vi.mocked(fixture.services.upload.upload).mock.calls
     expect(calls.map(call => call[1])).toEqual(files.map(item => item.file))
@@ -95,7 +89,7 @@ describe('original media public-service bridge', () => {
     const fixture = setup()
     const files = drafts().slice(0, 1)
     vi.mocked(fixture.services.upload.upload).mockImplementationOnce(async () => {
-      fixture.select('user-route')
+      fixture.select('volcengine-user-route')
       return { ok: true, value: { receiptId: 'old-generation' } }
     })
     const send = () => fixture.operations.send(files, '', new AbortController().signal, () => {})
@@ -128,7 +122,7 @@ describe('original media public-service bridge', () => {
     })
     const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
     await executing
-    fixture.select('user-route', 'switched-model')
+    fixture.select('volcengine-user-route', 'switched-model')
     await expect(sending).rejects.toThrow('提交状态未确认')
     release()
     expect(executeSignal?.aborted).toBe(true)
@@ -150,7 +144,7 @@ describe('original media public-service bridge', () => {
     })
     const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
     await executing
-    fixture.select('user-route', 'switched-model')
+    fixture.select('volcengine-user-route', 'switched-model')
     release()
     await expect(sending).resolves.toBeUndefined()
     expect(executeSignal?.aborted).toBe(true)
@@ -171,7 +165,7 @@ describe('original media public-service bridge', () => {
     })
     const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
     await executing
-    fixture.select('user-route', 'switched-model')
+    fixture.select('volcengine-user-route', 'switched-model')
     await expect(sending).rejects.toThrow('提交状态未确认')
     expect(fixture.services.commands.execute).toHaveBeenCalledOnce()
   })

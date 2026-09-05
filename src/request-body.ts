@@ -7,10 +7,6 @@ function isPlainObject(value: unknown): value is RequestBody {
   return prototype === Object.prototype || prototype === null
 }
 
-function cloneValue<T>(value: T): T {
-  return structuredClone(value)
-}
-
 function ownValue(target: RequestBody, key: string): unknown {
   return Object.prototype.hasOwnProperty.call(target, key) ? target[key] : undefined
 }
@@ -20,13 +16,47 @@ function ownValue(target: RequestBody, key: string): unknown {
  * intentionally avoided because a valid JSON key such as `__proto__` must be
  * preserved as data rather than invoking an inherited prototype setter.
  */
-function setOwnValue(target: RequestBody, key: string, value: unknown): void {
+function setOwnValue(target: object, key: string, value: unknown): void {
   Object.defineProperty(target, key, {
     value,
     configurable: true,
     enumerable: true,
     writable: true,
   })
+}
+
+/**
+ * Clone JSON containers while sharing immutable primitive values. In
+ * particular, a generated base64 string is not serialized through
+ * `structuredClone` merely because one unrelated custom field is merged.
+ */
+function cloneValue<T>(value: T, seen = new Map<object, unknown>()): T {
+  if (typeof value !== 'object' || value === null) return value
+  const source = value as object
+  const existing = seen.get(source)
+  if (existing !== undefined) return existing as T
+
+  if (Array.isArray(value)) {
+    const result = new Array<unknown>(value.length)
+    seen.set(source, result)
+    for (const [key, item] of Object.entries(value)) {
+      setOwnValue(result, key, cloneValue(item, seen))
+    }
+    return result as T
+  }
+
+  if (isPlainObject(value)) {
+    const result = Object.create(Object.getPrototypeOf(value)) as RequestBody
+    seen.set(source, result)
+    for (const [key, item] of Object.entries(value)) {
+      setOwnValue(result, key, cloneValue(item, seen))
+    }
+    return result as T
+  }
+
+  // Non-JSON values are outside the wire contract, but retain the previous
+  // structured-clone behavior until JSON.stringify decides their wire form.
+  return structuredClone(value)
 }
 
 /**

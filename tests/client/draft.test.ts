@@ -60,6 +60,15 @@ describe('client settings draft', () => {
     }
   })
 
+  it('accepts a non-negative decimal agent-media budget and treats zero as disabled', () => {
+    for (const value of [undefined, 0, 0.25, 45, 9000.5]) {
+      expect(validateModels([{ id: 'model-a', agentMediaFallbackMB: value }])).toBeUndefined()
+    }
+    for (const value of [-1, Infinity, -Infinity, NaN, Number.MAX_SAFE_INTEGER]) {
+      expect(validateModels([{ id: 'model-a', agentMediaFallbackMB: value }])).toContain('智能体媒体续链预算')
+    }
+  })
+
   it('writes only changed known fields and leaves unrelated route settings untouched', () => {
     const before = {
       kind: 'standard', name: 'Old', baseURL: 'https://example.test/v3',

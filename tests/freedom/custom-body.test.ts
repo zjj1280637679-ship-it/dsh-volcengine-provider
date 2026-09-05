@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { composeRequestBody } from '../../src/request-body.js'
 
@@ -74,5 +74,17 @@ describe('freedom contract: custom request body', () => {
     expect(result.__proto__).toEqual({ vendor: true })
     expect(result.constructor).toEqual({ prototype: { future: 1 } })
     expect(({} as Record<string, unknown>).vendor).toBeUndefined()
+  })
+
+  it('does not structured-clone generated JSON strings while merging an unrelated field', () => {
+    const structuredClone = vi.spyOn(globalThis, 'structuredClone')
+    const dataUrl = `data:video/mp4;base64,${'A'.repeat(1024 * 1024)}`
+    const base = { messages: [{ role: 'user', content: [{ type: 'video_url', video_url: { url: dataUrl } }] }] }
+    const result = composeRequestBody(base, { temperature: 0.1 }, 'merge')
+
+    expect(structuredClone).not.toHaveBeenCalled()
+    expect((result.messages as typeof base.messages)[0]!.content[0]!.video_url.url).toBe(dataUrl)
+    expect(Object.prototype.hasOwnProperty.call(result, 'messages')).toBe(true)
+    structuredClone.mockRestore()
   })
 })

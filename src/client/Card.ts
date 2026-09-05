@@ -1,7 +1,7 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { DEFAULT_ROUTES } from '../routes.js'
-import type { Modality, ModalityOverride } from '../domain.js'
+import { DEFAULT_AGENT_MEDIA_FALLBACK_MB, type Modality, type ModalityOverride } from '../domain.js'
 import type { CardOperations, SettingsNamespaceView } from './operations.js'
 import {
   parseCustomBody, routeAt, routeChanges, validateModels,
@@ -98,6 +98,13 @@ function ModelEditor({ model, index, disabled, update, remove }: ModelEditorProp
       field('输出上限（可选）', textInput('输出上限', value.maxTokens === undefined ? '' : String(value.maxTokens),
         text => change({ maxTokens: text === '' ? undefined : Number(text) }), disabled,
         { type: 'number', min: 1, step: 1, placeholder: '留空使用供应商默认值' })),
+      field('智能体媒体续链预算（十进制 MB）', textInput(
+        '智能体媒体续链预算',
+        String(value.agentMediaFallbackMB ?? DEFAULT_AGENT_MEDIA_FALLBACK_MB),
+        text => change({ agentMediaFallbackMB: text === '' ? undefined : Number(text) }),
+        disabled,
+        { type: 'number', min: 0, step: 'any' },
+      ), '仅作用于 tool-result 中的图片和视频。超额媒体只从本次模型请求省略，不删除原文件；AI 会收到诊断并自行决定下一步。0 表示关闭此降级。1 MB = 1,000,000 字节。'),
       h('div', { style: stack }, h('span', null, '输入模态'),
         h('p', { style: small }, '未设置不声明模型能力，也不阻止你主动提交媒体；只有手动关闭才阻止发送。供应商反馈不会自动填写或修改。文本默认可用。'),
         ...(Object.keys(modalityLabels) as Modality[]).map(modality =>

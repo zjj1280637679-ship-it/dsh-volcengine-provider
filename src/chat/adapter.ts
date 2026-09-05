@@ -19,10 +19,11 @@ import {
 } from './discovery.js'
 import { parseJsonResponse, providerHttpError } from './errors.js'
 import {
-  serializeChatRequest,
+  inspectChatMediaFootprint, serializeChatRequest,
   type EncodeMediaPart,
   type ResolveMediaBytes,
 } from './serialize.js'
+import { acquireMediaRequest, type InspectMediaRuntimeMemory } from './media-runtime.js'
 import { parseSse } from './sse.js'
 import { translateCompletion, translateSsePayloads } from './translate.js'
 import type { WireCompletion } from './types.js'
@@ -50,6 +51,8 @@ export interface VolcengineChatAdapterOptions {
   encodeMediaPart?: EncodeMediaPart
   feedback?: ModelFeedbackStore
   fetchImpl?: typeof fetch
+  /** Deterministic seam for resource-admission tests; production reads live process/OS state. */
+  inspectMediaRuntimeMemory?: InspectMediaRuntimeMemory
 }
 
 function mandatoryHeaders(additional?: HeadersInit): Headers {
@@ -121,23 +124,52 @@ export class VolcengineChatAdapter extends LlmAdapter {
       options.signal,
     )
     options.signal?.throwIfAborted()
-    const body = await serializeChatRequest(options, {
+    const serialization = {
       modelConfig: connection.modelConfig,
       customBody: connection.customBody,
       customBodyMode: connection.customBodyMode,
       resolveMediaBytes: this.config.resolveMediaBytes,
       encodeMediaPart: this.config.encodeMediaPart,
-    })
-
-    const response = await sendArkJson({
-      route: connection.route,
-      operation: 'chat/completions',
-      apiKey: connection.apiKey,
-      headers: mandatoryHeaders(connection.headers),
-      body,
-      signal: options.signal,
-      fetchImpl: this.config.fetchImpl,
-    })
+    }
+    const footprint = inspectChatMediaFootprint(options, serialization)
+    let response: Response
+    if (footprint.mediaCount === 0) {
+      const body = await serializeChatRequest(options, serialization)
+      response = await sendArkJson({
+        route: connection.route,
+        operation: 'chat/completions',
+        apiKey: connection.apiKey,
+        headers: mandatoryHeaders(connection.headers),
+        body,
+        signal: options.signal,
+        fetchImpl: this.config.fetchImpl,
+      })
+    } else {
+      const release = await acquireMediaRequest(
+        footprint,
+        options.signal,
+        this.config.inspectMediaRuntimeMemory,
+      )
+      let body: RequestBody | undefined
+      try {
+        body = await serializeChatRequest(options, serialization)
+        response = await sendArkJson({
+          route: connection.route,
+          operation: 'chat/completions',
+          apiKey: connection.apiKey,
+          headers: mandatoryHeaders(connection.headers),
+          body,
+          signal: options.signal,
+          fetchImpl: this.config.fetchImpl,
+        })
+      } finally {
+        // Fetch has either failed or accepted the JSON body and returned its
+        // response headers. Drop the large object graph before handing off the
+        // process-wide media slot; consuming an SSE response needs no slot.
+        body = undefined
+        release()
+      }
+    }
     if (!response.ok) throw await providerHttpError(response)
 
     if (responseIsSse(response)) {

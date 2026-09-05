@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
+import { describe, expect, it, vi } from 'vitest'
+import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 
 import { createDefaultModelConfig } from '../../src/domain.js'
 import { decodeVerbatimBase64, parseVerbatimDataUrl, sha256Hex } from '../../src/media.js'
@@ -27,6 +27,12 @@ function options(messages: Message[], extra: Partial<GenerateOptions> = {}): Gen
 
 function attachment(id: string, bytes: number) {
   return { attachmentId: id, name: `${id}.bin`, bytes }
+}
+
+function toolResult(callId: string, content: ContentBlock[]): Message {
+  return user([{
+    type: 'tool-result', toolCallId: callId as never, content,
+  }])
 }
 
 describe('step 3 serializer', () => {
@@ -137,6 +143,94 @@ describe('step 3 serializer', () => {
     })
     const audio = parts[3]!.input_audio as { data: string }
     expect(sha256Hex(decodeVerbatimBase64(audio.data))).toBe(sha256Hex(audioBytes))
+  })
+
+  it('uses the default 45 decimal MB budget only for tool-result image/video and preserves tool text', async () => {
+    const resolveMediaBytes = vi.fn(async () => Uint8Array.of(1))
+    const body = await serializeChatRequest(options([toolResult('call-default', [
+      { type: 'text', text: 'original tool text' },
+      {
+        type: 'volcengine-video', attachment: attachment('too-large', 45_000_001), mediaType: 'video/mp4',
+      },
+    ])]), { resolveMediaBytes })
+
+    expect(resolveMediaBytes).not.toHaveBeenCalled()
+    const messages = body.messages as Array<{ role: string; content: string }>
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({ role: 'tool', content: expect.stringMatching(/^original tool text\n/u) })
+    expect(messages[0]!.content).toContain('code=TOOL_MEDIA_BUDGET_EXCEEDED')
+    expect(messages[0]!.content).toContain('action=omitted_from_this_request')
+    expect(messages[0]!.content).toContain('source_file_deleted=false')
+  })
+
+  it('applies one configurable cumulative budget in order and never reads an omitted block', async () => {
+    const config = createDefaultModelConfig()
+    config.agentMediaFallbackMB = 0.000005 // five bytes, using decimal MB
+    const byId = new Map([
+      ['first-image', Uint8Array.from([1, 2, 3])],
+      ['skipped-video', Uint8Array.from([4, 5, 6])],
+      ['last-image', Uint8Array.from([7, 8])],
+    ])
+    const resolveMediaBytes = vi.fn(async block => byId.get(String(block.attachment.attachmentId))!)
+    const body = await serializeChatRequest(options([
+      toolResult('call-one', [
+        { type: 'text', text: 'first result text' },
+        { type: 'volcengine-image', attachment: attachment('first-image', 3), mediaType: 'image/png' },
+      ]),
+      toolResult('call-two', [
+        { type: 'text', text: 'second result text' },
+        { type: 'volcengine-video', attachment: attachment('skipped-video', 3), mediaType: 'video/mp4' },
+        { type: 'volcengine-image', attachment: attachment('last-image', 2), mediaType: 'image/png' },
+      ]),
+    ]), { modelConfig: config, resolveMediaBytes })
+
+    expect(resolveMediaBytes.mock.calls.map(([block]) => block.attachment.attachmentId))
+      .toEqual(['first-image', 'last-image'])
+    const messages = body.messages as Array<{ role: string; content: unknown; tool_call_id?: string }>
+    expect(messages[0]).toEqual({ role: 'tool', tool_call_id: 'call-one', content: 'first result text' })
+    expect(messages[1]).toMatchObject({
+      role: 'tool', tool_call_id: 'call-two', content: expect.stringMatching(/^second result text\n/u),
+    })
+    expect(String(messages[1]!.content)).toContain('media=video')
+    expect(String(messages[1]!.content)).toContain('budget_bytes=5')
+    expect((messages[2]!.content as Array<{ type: string }>).map(part => part.type))
+      .toEqual(['text', 'image_url', 'image_url'])
+  })
+
+  it('treats zero as disabled and never applies the tool fallback to direct user media', async () => {
+    const config = createDefaultModelConfig()
+    config.agentMediaFallbackMB = 0
+    const resolveDisabled = vi.fn(async () => Uint8Array.of(9))
+    const disabledBody = await serializeChatRequest(options([toolResult('call-disabled', [{
+      type: 'volcengine-video', attachment: attachment('unlimited-tool-video', 900_000_000), mediaType: 'video/mp4',
+    }])]), { modelConfig: config, resolveMediaBytes: resolveDisabled })
+    expect(resolveDisabled).toHaveBeenCalledOnce()
+    expect((disabledBody.messages as Array<{ role: string }>).map(message => message.role)).toEqual(['tool', 'user'])
+    expect(JSON.stringify(disabledBody.messages)).not.toContain('VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR')
+
+    const tiny = createDefaultModelConfig()
+    tiny.agentMediaFallbackMB = 0.000001
+    const resolveUser = vi.fn(async () => Uint8Array.of(8))
+    const directBody = await serializeChatRequest(options([user([{
+      type: 'volcengine-video', attachment: attachment('direct-user-video', 900_000_000), mediaType: 'video/mp4',
+    }])]), { modelConfig: tiny, resolveMediaBytes: resolveUser })
+    expect(resolveUser).toHaveBeenCalledOnce()
+    expect(JSON.stringify(directBody.messages)).toContain('data:video/mp4;base64,CA==')
+    expect(JSON.stringify(directBody.messages)).not.toContain('VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR')
+  })
+
+  it('does not count or omit tool-result audio under the image/video fallback budget', async () => {
+    const config = createDefaultModelConfig()
+    config.agentMediaFallbackMB = 0.000001
+    const resolveMediaBytes = vi.fn(async block => block.type === 'volcengine-audio'
+      ? Uint8Array.of(1, 2, 3)
+      : Uint8Array.of(4))
+    const body = await serializeChatRequest(options([toolResult('call-audio', [
+      { type: 'volcengine-audio', attachment: attachment('audio', 99_000_000), mediaType: 'audio/wav' },
+      { type: 'volcengine-image', attachment: attachment('image', 1), mediaType: 'image/png' },
+    ])]), { modelConfig: config, resolveMediaBytes })
+    expect(resolveMediaBytes).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(body.messages)).not.toContain('VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR')
   })
 
   it('honors explicit local disable without consulting supplier feedback', async () => {

@@ -31,6 +31,7 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
   const addressable = !session.removed && session.subagent === null
   const provider = selection.current?.provider
   const model = selection.current?.model
+  const loopbackVideo = operations.mode === 'loopback-video'
 
   useEffect(() => {
     mounted.current = true
@@ -58,7 +59,10 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
 
   let invalid = ''
   if (files.length > 0) {
-    try { mediaCommandLine(files, prompt) } catch (error) { invalid = error instanceof Error ? error.message : '请检查媒体类型。' }
+    try {
+      if (operations.validate !== undefined) operations.validate(files, prompt)
+      else mediaCommandLine(files, prompt)
+    } catch (error) { invalid = error instanceof Error ? error.message : '请检查媒体类型。' }
   }
   const send = async (): Promise<void> => {
     if (pending.current !== undefined || !ready || invalid !== '' || files.length === 0) return
@@ -89,22 +93,30 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
     setFiles(current => current.map((value, item) => item === index ? { ...value, ...patch } : value))
   }
 
-  return h('details', { style: { margin: '8px 0', fontSize: 13 }, 'aria-label': '火山方舟原始媒体' },
+  return h('details', { open: true, style: { margin: '8px 0', fontSize: 13 }, 'aria-label': '火山方舟原始媒体' },
     h('summary', { style: { cursor: 'pointer' } }, '方舟原始媒体'),
     h('div', { style: { display: 'grid', gap: 10, padding: '10px 0' } },
-      h('p', { style: { margin: 0 } }, '图片、音频和视频按原文件上传。请手动填写每个文件的 MIME 类型；插件不会自动填写或修改模型模态。'),
+      h('p', { style: { margin: 0 } }, loopbackVideo
+        ? '本机兼容入口：一次选择一个原始 MP4；不抽帧、不转码、不修改字节。MIME 必须由用户明确填写为 video/mp4。'
+        : '图片、音频和视频按原文件上传。请手动填写每个文件的 MIME 类型；插件不会自动填写或修改模型模态。'),
       h('p', { style: { margin: 0 } }, selection.current === null ? '尚未选择模型。' : `当前模型：${provider} / ${model}`),
-      h('input', { ref: picker, type: 'file', multiple: true, hidden: true, 'aria-label': '选择原始媒体文件', disabled: busy || !ready,
+      loopbackVideo ? h('p', { style: { margin: 0, fontSize: 12, opacity: 0.8 } },
+        '用户主动上传不受插件文件大小阈值阻断；若超过当前方舟 API 或模型条件，界面保留真实 API 错误。 ',
+        h('a', { href: 'https://www.volcengine.com/docs/82379/1895586?lang=zh', target: '_blank', rel: 'noreferrer' }, '官方视频理解文档')) : null,
+      h('input', { ref: picker, type: 'file', multiple: !loopbackVideo, accept: loopbackVideo ? 'video/mp4' : undefined,
+        hidden: true, 'aria-label': loopbackVideo ? '选择原始 MP4 文件' : '选择原始媒体文件', disabled: busy || !ready,
         onChange: (event: { target: HTMLInputElement }) => {
           const selected = Array.from(event.target.files ?? [])
-          setFiles(current => [...current, ...selected.map(file => ({ file,
+          const additions = selected.map(file => ({ file,
             // Browser-provided File.type is advice, not a user declaration.
             // Keep this blank so the plugin never auto-fills media input.
-            mediaType: '' }))])
+            mediaType: '' }))
+          setFiles(current => loopbackVideo ? additions.slice(0, 1) : [...current, ...additions])
           event.target.value = ''
           setNotice('')
         } }),
-      h('button', { type: 'button', style: button, disabled: busy || !ready, onClick: () => picker.current?.click() }, '添加原始媒体'),
+      h('button', { type: 'button', style: button, disabled: busy || !ready, onClick: () => picker.current?.click() },
+        loopbackVideo ? '选择原始 MP4' : '添加原始媒体'),
       ...files.map((item, index) => h('fieldset', { key: index, disabled: busy,
         style: { display: 'grid', gap: 8, minWidth: 0, margin: 0, border: '1px solid var(--dsw-border-primary, currentColor)', borderRadius: 6 } },
       h('legend', null, `${index + 1}. ${item.file.name}（${item.file.size} 字节）`),

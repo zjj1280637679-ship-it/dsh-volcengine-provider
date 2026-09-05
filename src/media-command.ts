@@ -2,6 +2,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 
 import type { VerbatimAttachmentRefLike } from './media.js'
+import type { OriginalVideoStaging } from './media-fallback-rpc.js'
+import { MediaFallbackSelectionError, supportsMediaFallbackRpc } from './media-fallback-rpc.js'
 
 /** Attachments already admitted by the official Commands service, in input order. */
 export type AdmittedMediaAttachment =
@@ -83,8 +85,10 @@ export function buildMediaCommandContent(
 
 /** Structural public Agent face avoids requiring new Harness packages on the image-only baseline. */
 interface CommandAgent {
+  readonly id: string
   readonly session: {
-    requestHeader(): { readonly config: { readonly provider: string } } | undefined
+    readonly id: string
+    requestHeader(): { readonly config: { readonly provider: string; readonly model?: string } } | undefined
   }
   steer(message: ReturnType<typeof createUserMessage>): void
 }
@@ -101,8 +105,9 @@ type MediaCommandResult = { readonly kind: 'success' } | { readonly kind: 'error
 interface MediaCommandDefinition {
   readonly name: string
   readonly description: string
-  readonly input: { readonly hint: string; readonly attachments: true }
-  readonly handler: (invocation: MediaCommandInvocation) => MediaCommandResult
+  readonly input?: { readonly hint: string; readonly attachments?: true; readonly images?: boolean }
+  readonly recordInput?: boolean
+  readonly handler: (invocation: MediaCommandInvocation) => MediaCommandResult | Promise<MediaCommandResult>
 }
 
 interface CommandsService {
@@ -111,12 +116,12 @@ interface CommandsService {
 
 interface ModelSelectionProjections {
   stateOf(session: CommandAgent['session'], key: 'modelSelection'):
-    | { readonly pending: { readonly provider: string } | null }
+    | { readonly pending: { readonly provider: string; readonly model?: string } | null }
     | undefined
 }
 
 interface DefaultModelService {
-  currentSelection(): { readonly provider: string }
+  currentSelection(): { readonly provider: string; readonly model?: string }
 }
 
 /**
@@ -124,14 +129,18 @@ interface DefaultModelService {
  * packages/api/session-controller/src/agent.ts: pending selection, request header,
  * then the default model. Agent.options can predate a UI model switch.
  */
-function selectedProvider(ctx: Context, agent: CommandAgent): string | undefined {
+function selectedModel(ctx: Context, agent: CommandAgent): { readonly provider: string; readonly model?: string } | undefined {
   const projections = ctx.get('sessionProjections') as ModelSelectionProjections | undefined
   const pending = projections?.stateOf(agent.session, 'modelSelection')?.pending
-  if (pending !== undefined && pending !== null) return pending.provider
+  if (pending !== undefined && pending !== null) return pending
   const header = agent.session.requestHeader()
-  if (header !== undefined) return header.config.provider
+  if (header !== undefined) return header.config
   const defaults = ctx.get('agentDefaultModel') as DefaultModelService | undefined
-  return defaults?.currentSelection().provider
+  return defaults?.currentSelection()
+}
+
+function selectedProvider(ctx: Context, agent: CommandAgent): string | undefined {
+  return selectedModel(ctx, agent)?.provider
 }
 
 /**
@@ -165,6 +174,92 @@ export function registerMediaCommand(ctx: Context, isOwnedProvider: (provider: s
         if (signal.aborted) return { kind: 'error', text: 'Media submission was cancelled before delivery.' }
         agent.steer(createUserMessage({ content, source: { kind: 'user' } }))
         return { kind: 'success' }
+      },
+    }))
+  })
+}
+
+const LOCAL_TOKEN_PATTERN = /^[a-f0-9]{64}$/u
+
+function exactAgentSession(agent: CommandAgent): string | undefined {
+  if (typeof agent.id !== 'string' || agent.id === ''
+    || typeof agent.session.id !== 'string' || agent.session.id !== agent.id) return undefined
+  return agent.id
+}
+
+/**
+ * Register the token-only rc.2 fallback command. The original bytes and prompt
+ * never appear in command input or attachment admission; both are recovered
+ * from a short-lived, same-session staging token.
+ */
+export function registerLocalMediaCommand(
+  ctx: Context,
+  isOwnedProvider: (provider: string) => boolean,
+  staging: OriginalVideoStaging,
+): void {
+  ctx.inject(['commands', 'connection'], commandCtx => {
+    if (!supportsMediaFallbackRpc(commandCtx)) return
+    const commands = commandCtx.get('commands') as CommandsService
+    commandCtx.effect(() => commands.register({
+      name: 'ark-media-local',
+      description: 'Send one staged original MP4 to the selected Volcengine model.',
+      input: { hint: '<staging-token>' },
+      recordInput: false,
+      handler: async ({ agent, rawInput, attachments, signal }) => {
+        if (signal.aborted) return { kind: 'error', text: 'Original MP4 submission was cancelled before delivery.' }
+        if (attachments.length !== 0) {
+          return { kind: 'error', text: 'The original MP4 command does not accept composer attachments.' }
+        }
+        const sessionId = exactAgentSession(agent)
+        if (sessionId === undefined) {
+          return { kind: 'error', text: 'The receiving Agent and Session identity could not be verified.' }
+        }
+        const token = rawInput.trim()
+        if (!LOCAL_TOKEN_PATTERN.test(token)) {
+          return { kind: 'error', text: 'The staged original MP4 token is invalid or no longer available.' }
+        }
+        const selection = selectedModel(commandCtx, agent)
+        if (selection === undefined || typeof selection.model !== 'string' || selection.model === '') {
+          return { kind: 'error', text: 'The current model selection is unavailable. Select a Volcengine model before submitting the MP4.' }
+        }
+        if (!isOwnedProvider(selection.provider)) {
+          return { kind: 'error', text: 'Select an enabled Volcengine provider before submitting the MP4. This command does not change the selected model.' }
+        }
+        // take() removes the entry before awaiting filesystem publication, so
+        // parallel execution and replay cannot submit the staged payload twice.
+        let staged
+        try {
+          staged = await staging.take(sessionId, token, selection.provider, selection.model, signal)
+        } catch (error) {
+          if (error instanceof MediaFallbackSelectionError) {
+            return { kind: 'error', text: 'The selected provider or model changed after upload; the original MP4 was not delivered.' }
+          }
+          return signal.aborted
+            ? { kind: 'error', text: 'Original MP4 submission was cancelled before delivery.' }
+            : { kind: 'error', text: 'The original MP4 submission could not be completed.' }
+        }
+        if (staged === undefined) {
+          return { kind: 'error', text: 'The staged original MP4 token is invalid or no longer available.' }
+        }
+        try {
+          signal.throwIfAborted()
+          const latest = selectedModel(commandCtx, agent)
+          if (latest?.provider !== staged.expectedProvider || latest.model !== staged.expectedModel
+            || !isOwnedProvider(latest.provider)) {
+            return { kind: 'error', text: 'The selected provider or model changed before delivery; the original MP4 was not delivered.' }
+          }
+          const content: ContentBlock[] = [{
+            type: 'volcengine-video', attachment: staged.attachment, mediaType: 'video/mp4',
+          }]
+          const prompt = staged.prompt.trim()
+          if (prompt !== '') content.push({ type: 'text', text: prompt })
+          agent.steer(createUserMessage({ content, source: { kind: 'user' } }))
+          return { kind: 'success' }
+        } catch {
+          return signal.aborted
+            ? { kind: 'error', text: 'Original MP4 submission was cancelled before delivery.' }
+            : { kind: 'error', text: 'The original MP4 submission could not be completed.' }
+        }
       },
     }))
   })

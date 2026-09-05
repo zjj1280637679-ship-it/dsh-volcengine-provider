@@ -20,10 +20,6 @@ export interface MediaServices {
     execute(sessionId: string, line: string, attachments: readonly { type: 'file'; receiptId: string }[],
       signal?: AbortSignal): Promise<Result<{ result: { kind: 'success' | 'error'; text?: string } } | undefined>>
   }
-  llm: {
-    listConfigurableProviders(): Promise<Result<readonly { provider: string; settingsNs: string }[]>>
-    listProviders(): Promise<Result<readonly { id: string }[]>>
-  }
   directory: { store: ReadableStore<MediaDirectoryState>; load(): Promise<unknown> }
   canAddress(): boolean
   generation: ReadableStore<number>
@@ -31,8 +27,12 @@ export interface MediaServices {
 
 export interface MediaOperations {
   readonly sessionId: string
+  /** Host attachment flow, or the loopback-only raw MP4 compatibility flow. */
+  readonly mode?: 'host-media' | 'loopback-video'
+  readonly maxFiles?: number
   readonly selection: ReadableStore<MediaDirectoryState>
   readonly generation: ReadableStore<number>
+  validate?(files: readonly MediaDraftFile[], prompt: string): void
   check(signal?: AbortSignal): Promise<MediaSelection>
   send(files: readonly MediaDraftFile[], prompt: string, signal: AbortSignal,
     progress: (value: MediaProgress) => void): Promise<void>
@@ -45,6 +45,15 @@ function unwrap<T>(result: Result<T>): T {
 function abort(signal?: AbortSignal): void { signal?.throwIfAborted() }
 function same(a: MediaSelection, b: MediaSelection): boolean {
   return a.provider === b.provider && a.model === b.model
+}
+
+/**
+ * Provider ids are created by config.providerId(). This is only a client-side
+ * availability hint; the command handler rechecks live plugin ownership at the
+ * delivery boundary, so a colliding id cannot cross the server trust boundary.
+ */
+function selectedVolcengineModel(selection: MediaSelection): boolean {
+  return selection.provider.startsWith('volcengine-') && selection.model.length > 0
 }
 
 /** User choices become command arguments; filenames never decide how bytes are interpreted. */
@@ -68,15 +77,9 @@ export function createMediaOperations(sessionId: string, services: MediaServices
     const state = services.directory.store.getSnapshot()
     if (state.current === null || state.routable === false) throw new Error('请先选择已启用的火山方舟模型。')
     const selected = { ...state.current }
-    const [declared, active, commands] = await Promise.all([
-      services.llm.listConfigurableProviders(), services.llm.listProviders(),
-      services.commands.list(sessionId),
-    ])
+    if (!selectedVolcengineModel(selected)) throw new Error('请先选择已启用的火山方舟模型。')
+    const commands = await services.commands.list(sessionId)
     abort(signal)
-    if (!unwrap(declared).some(row => row.provider === selected.provider && row.settingsNs === 'llm-volcengine')
-      || !unwrap(active).some(row => row.id === selected.provider)) {
-      throw new Error('请先选择已启用的火山方舟模型。')
-    }
     if (!unwrap(commands).some(row => row.name === 'ark-media' && row.input?.attachments === true)) {
       throw new Error('当前 Harness 未提供原始媒体命令。')
     }
@@ -85,7 +88,7 @@ export function createMediaOperations(sessionId: string, services: MediaServices
     return selected
   }
   return {
-    sessionId, selection: services.directory.store, generation: services.generation, check,
+    sessionId, mode: 'host-media', selection: services.directory.store, generation: services.generation, check,
     async send(files, prompt, signal, progress) {
       const line = mediaCommandLine(files, prompt)
       const generation = services.generation.getSnapshot()

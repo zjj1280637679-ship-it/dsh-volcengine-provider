@@ -7,6 +7,7 @@ import {
 
 import {
   createDefaultModelConfig,
+  DEFAULT_AGENT_MEDIA_FALLBACK_MB,
   isModalityEnabled,
   type ModelConfig,
   type Modality,
@@ -17,6 +18,7 @@ import {
   type RequestBody,
   type RequestBodyMode,
 } from '../request-body.js'
+import type { MediaRequestFootprint } from './media-runtime.js'
 import type {
   WireAssistantMessage,
   WireMessage,
@@ -48,6 +50,53 @@ export interface ChatSerializationOptions {
   encodeMediaPart?: EncodeMediaPart
 }
 
+type BudgetedToolMediaBlock =
+  | Extract<ContentBlock, { type: 'image' }>
+  | Extract<ContentBlock, { type: 'volcengine-image' }>
+  | Extract<ContentBlock, { type: 'volcengine-video' }>
+
+interface AgentMediaBudget {
+  readonly limitBytes: number
+  usedBytes: number
+}
+
+interface ToolMediaContext {
+  readonly budget: AgentMediaBudget | undefined
+  readonly diagnostics: string[]
+}
+
+const DECIMAL_MB_BYTES = 1_000_000
+
+function createAgentMediaBudget(config: ModelConfig): AgentMediaBudget | undefined {
+  const megabytes = config.agentMediaFallbackMB ?? DEFAULT_AGENT_MEDIA_FALLBACK_MB
+  if (!Number.isFinite(megabytes) || megabytes < 0
+    || megabytes * DECIMAL_MB_BYTES > Number.MAX_SAFE_INTEGER) {
+    throw new LlmError('The agent media fallback budget is invalid.', 'INVALID_AGENT_MEDIA_FALLBACK_BUDGET')
+  }
+  if (megabytes === 0) return undefined
+  return { limitBytes: Math.floor(megabytes * DECIMAL_MB_BYTES), usedBytes: 0 }
+}
+
+function isBudgetedToolMedia(block: ContentBlock): block is BudgetedToolMediaBlock {
+  return block.type === 'image' || block.type === 'volcengine-image' || block.type === 'volcengine-video'
+}
+
+function omittedToolMediaDiagnostic(
+  block: BudgetedToolMediaBlock,
+  budget: AgentMediaBudget,
+): string | undefined {
+  const declaredBytes = block.attachment.bytes
+  const media = block.type === 'volcengine-video' ? 'video' : 'image'
+  if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0) {
+    return `[VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR code=TOOL_MEDIA_SIZE_INVALID media=${media} action=omitted_from_this_request source_file_deleted=false automatic_retry=false next=choose_strategy]`
+  }
+  if (declaredBytes <= budget.limitBytes - budget.usedBytes) {
+    budget.usedBytes += declaredBytes
+    return undefined
+  }
+  return `[VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR code=TOOL_MEDIA_BUDGET_EXCEEDED media=${media} declared_bytes=${declaredBytes} used_bytes=${budget.usedBytes} budget_bytes=${budget.limitBytes} action=omitted_from_this_request source_file_deleted=false automatic_retry=false next=choose_strategy]`
+}
+
 function blockType(block: ContentBlock): string {
   return (block as { type: string }).type
 }
@@ -61,6 +110,118 @@ function modalityOf(block: MediaInputBlock): Modality {
 function mediaTypeOf(block: MediaInputBlock): string {
   if (block.type === 'image') return block.attachment.mediaType
   return block.mediaType
+}
+
+function assertModalityEnabled(config: ModelConfig, modality: Modality): void {
+  if (!isModalityEnabled(config, modality)) {
+    throw new LlmError(
+      `${modality} input is disabled by the local model-card policy.`,
+      'MODALITY_DISABLED',
+    )
+  }
+}
+
+function declaredMediaBytes(block: MediaInputBlock): number {
+  const bytes = block.attachment.bytes
+  if (!Number.isSafeInteger(bytes) || bytes < 0) {
+    throw new LlmError('The declared media byte length is invalid.', 'INVALID_MEDIA_REFERENCE')
+  }
+  return bytes
+}
+
+function generatedMessagesAreUsed(options: ChatSerializationOptions): boolean {
+  if ((options.customBodyMode ?? 'merge') === 'raw') return false
+  return options.customBody === undefined
+    || !Object.prototype.propertyIsEnumerable.call(options.customBody, 'messages')
+}
+
+interface MutableMediaFootprint {
+  mediaCount: number
+  declaredBytes: bigint
+  base64Bytes: bigint
+}
+
+function addMediaFootprint(
+  block: MediaInputBlock,
+  config: ModelConfig,
+  footprint: MutableMediaFootprint,
+): void {
+  assertModalityEnabled(config, modalityOf(block))
+  const bytes = BigInt(declaredMediaBytes(block))
+  footprint.mediaCount++
+  footprint.declaredBytes += bytes
+  footprint.base64Bytes += 4n * ((bytes + 2n) / 3n)
+  if (!Number.isSafeInteger(footprint.mediaCount)
+    || footprint.declaredBytes > BigInt(Number.MAX_SAFE_INTEGER)
+    || footprint.base64Bytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new LlmError('The declared media request size is invalid.', 'INVALID_MEDIA_SIZE')
+  }
+}
+
+function inspectContentMedia(
+  blocks: readonly ContentBlock[],
+  config: ModelConfig,
+  footprint: MutableMediaFootprint,
+  toolMedia?: ToolMediaContext,
+): void {
+  for (const block of blocks) {
+    switch (block.type) {
+      case 'text':
+        if (block.text.length > 0) assertModalityEnabled(config, 'text')
+        break
+      case 'image':
+      case 'volcengine-image':
+      case 'volcengine-video':
+      case 'volcengine-audio':
+        if (toolMedia !== undefined && isBudgetedToolMedia(block) && toolMedia.budget !== undefined) {
+          const diagnostic = omittedToolMediaDiagnostic(block, toolMedia.budget)
+          if (diagnostic !== undefined) break
+        }
+        addMediaFootprint(block, config, footprint)
+        break
+      case 'tool-result':
+        inspectContentMedia(block.content, config, footprint, toolMedia)
+        break
+      default:
+        throw new LlmError(
+          `Volcengine Chat cannot represent ${blockType(block)} in user content.`,
+          'UNSUPPORTED_CONTENT',
+        )
+    }
+  }
+}
+
+/** Inspect attachment declarations only; no bytes are read or transformed. */
+export function inspectChatMediaFootprint(
+  options: GenerateOptions,
+  serialization: ChatSerializationOptions = {},
+): MediaRequestFootprint {
+  if (!generatedMessagesAreUsed(serialization)) {
+    return { mediaCount: 0, declaredBytes: 0, base64Bytes: 0 }
+  }
+  const config = serialization.modelConfig ?? createDefaultModelConfig()
+  const budget = createAgentMediaBudget(config)
+  const footprint: MutableMediaFootprint = { mediaCount: 0, declaredBytes: 0n, base64Bytes: 0n }
+  for (const message of options.messages) {
+    if (message.role === 'system') continue
+    if (message.role === 'assistant') {
+      for (const block of message.content) assertAssistantBlock(block)
+      continue
+    }
+    const regular = message.content.filter(block => block.type !== 'tool-result')
+    const toolResults = message.content.filter(
+      (block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result',
+    )
+    inspectContentMedia(regular, config, footprint)
+    for (const result of toolResults) {
+      inspectContentMedia(result.content, config, footprint, { budget, diagnostics: [] })
+    }
+  }
+  return {
+    mediaCount: footprint.mediaCount,
+    declaredBytes: Number(footprint.declaredBytes),
+    base64Bytes: Number(footprint.base64Bytes),
+  }
 }
 
 /** Default Ark Chat wire shapes. Raw/custom-body mode remains available if a model needs a different experimental shape. */
@@ -127,12 +288,8 @@ async function encodeMedia(
   signal?: AbortSignal,
 ): Promise<WireUserPart> {
   const modality = modalityOf(block)
-  if (!isModalityEnabled(config, modality)) {
-    throw new LlmError(
-      `${modality} input is disabled by the local model-card policy.`,
-      'MODALITY_DISABLED',
-    )
-  }
+  assertModalityEnabled(config, modality)
+  declaredMediaBytes(block)
   if (options.resolveMediaBytes === undefined) {
     throw new LlmError(
       `${modality} input needs a media-byte resolver.`,
@@ -150,6 +307,7 @@ async function contentParts(
   config: ModelConfig,
   options: ChatSerializationOptions,
   signal?: AbortSignal,
+  toolMedia?: ToolMediaContext,
 ): Promise<WireUserPart[]> {
   const parts: WireUserPart[] = []
   for (const block of blocks) {
@@ -164,10 +322,17 @@ async function contentParts(
       case 'volcengine-image':
       case 'volcengine-video':
       case 'volcengine-audio':
+        if (toolMedia !== undefined && isBudgetedToolMedia(block) && toolMedia.budget !== undefined) {
+          const diagnostic = omittedToolMediaDiagnostic(block, toolMedia.budget)
+          if (diagnostic !== undefined) {
+            toolMedia.diagnostics.push(diagnostic)
+            break
+          }
+        }
         parts.push(await encodeMedia(block, config, options, signal))
         break
       case 'tool-result':
-        parts.push(...await contentParts(block.content, config, options, signal))
+        parts.push(...await contentParts(block.content, config, options, signal, toolMedia))
         break
       default:
         // Newer Harness versions project generic file blocks to text before
@@ -197,6 +362,7 @@ export async function serializeMessages(
   signal?: AbortSignal,
 ): Promise<WireMessage[]> {
   const config = options.modelConfig ?? createDefaultModelConfig()
+  const agentMediaBudget = createAgentMediaBudget(config)
   const wire: WireMessage[] = []
   let pendingToolMedia: WireUserPart[] = []
 
@@ -233,15 +399,21 @@ export async function serializeMessages(
     }
 
     for (const result of toolResults) {
-      const resultParts = await contentParts(result.content, config, options, signal)
+      const diagnostics: string[] = []
+      const resultParts = await contentParts(result.content, config, options, signal, {
+        budget: agentMediaBudget,
+        diagnostics,
+      })
       const text = resultParts
         .filter((part): part is Extract<WireUserPart, { type: 'text' }> => part.type === 'text')
         .map(part => part.text)
         .join('')
+      const diagnosticText = diagnostics.join('\n')
+      const toolText = text.length === 0 ? diagnosticText : diagnosticText.length === 0 ? text : `${text}\n${diagnosticText}`
       wire.push({
         role: 'tool',
         tool_call_id: String(result.toolCallId),
-        content: text || '(no output)',
+        content: toolText || '(no output)',
       })
       pendingToolMedia.push(...resultParts.filter(part => part.type !== 'text'))
     }
@@ -266,9 +438,15 @@ export async function serializeChatRequest(
     )
   }
 
+  const customBody = config.customBody ?? {}
+  const customBodyMode = config.customBodyMode ?? 'merge'
+  if (customBodyMode === 'raw') return composeRequestBody({}, customBody, customBodyMode)
+
   const messages: WireMessage[] = []
-  if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
-  messages.push(...await serializeMessages(options.messages, config, options.signal))
+  if (generatedMessagesAreUsed(config)) {
+    if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
+    messages.push(...await serializeMessages(options.messages, config, options.signal))
+  }
 
   const tools: WireTool[] | undefined = options.tools?.map(tool => ({
     type: 'function',
@@ -292,7 +470,7 @@ export async function serializeChatRequest(
 
   return composeRequestBody(
     base,
-    config.customBody ?? {},
-    config.customBodyMode ?? 'merge',
+    customBody,
+    customBodyMode,
   )
 }

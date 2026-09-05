@@ -1,6 +1,9 @@
 import z from '@deepseek-ai/schemastery'
 
-import { createDefaultModelConfig, MODALITIES, type Modality, type ModalityOverride, type ModelConfig } from './domain.js'
+import {
+  createDefaultModelConfig, DEFAULT_AGENT_MEDIA_FALLBACK_MB, MODALITIES,
+  type Modality, type ModalityOverride, type ModelConfig,
+} from './domain.js'
 import { DEFAULT_ROUTES, type RouteKind } from './routes.js'
 import type { RequestBody, RequestBodyMode } from './request-body.js'
 
@@ -16,6 +19,8 @@ export interface ModelCardConfig {
   customBodyMode?: RequestBodyMode
   contextWindow?: number
   maxTokens?: number
+  /** Decimal MB budget for image/video blocks newly introduced by tool results; zero disables omission. */
+  agentMediaFallbackMB?: number
   [key: string]: unknown
 }
 
@@ -68,6 +73,7 @@ const modelSchema: z<ModelCardConfig> = z.object({
   customBodyMode: z.union(['merge', 'patch', 'raw']),
   contextWindow: z.number().step(1).min(1),
   maxTokens: z.number().step(1).min(1),
+  agentMediaFallbackMB: z.number().min(0),
 })
 
 const routeSchema: z<RouteConfig> = z.object({
@@ -114,6 +120,11 @@ export function resolveConfig(raw: Config): ResolvedConfig {
           throw new Error(`${key}/${model.id}: ${field} must be a positive safe integer.`)
         }
       }
+      const fallbackMB = model.agentMediaFallbackMB
+      if (fallbackMB !== undefined && (!Number.isFinite(fallbackMB) || fallbackMB < 0
+        || fallbackMB * 1_000_000 > Number.MAX_SAFE_INTEGER)) {
+        throw new Error(`${key}/${model.id}: agentMediaFallbackMB must be a non-negative finite decimal MB value.`)
+      }
     }
     routes[key] = { ...route, enabled: route.enabled ?? true, name: route.name?.trim() ? route.name : NAMES[route.kind], baseURL, apiKeyEnv, models }
   }
@@ -133,6 +144,7 @@ export function parseModelBody(body: ModelCardConfig['customBody']): RequestBody
 /** Capabilities derive exclusively from the user's model card. */
 export function modelPolicy(model?: ModelCardConfig): ModelConfig {
   const config = createDefaultModelConfig()
+  config.agentMediaFallbackMB = model?.agentMediaFallbackMB ?? DEFAULT_AGENT_MEDIA_FALLBACK_MB
   for (const modality of MODALITIES) {
     const override = model?.modalities?.[modality]
     if (override !== undefined) config.modalities[modality] = { override }

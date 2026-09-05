@@ -61,6 +61,11 @@ export function validateModels(models: readonly DraftModelCard[]): string | unde
         return `第 ${index + 1} 个模型的${label}必须为正整数。`
       }
     }
+    const fallbackMB = model.agentMediaFallbackMB
+    if (fallbackMB !== undefined && (!Number.isFinite(fallbackMB) || fallbackMB < 0
+      || fallbackMB * 1_000_000 > Number.MAX_SAFE_INTEGER)) {
+      return `第 ${index + 1} 个模型的智能体媒体续链预算必须是非负有限十进制 MB；0 表示关闭。`
+    }
   }
   return undefined
 }

@@ -1,4 +1,5 @@
 export const MODALITIES = ['text', 'image', 'video', 'audio'] as const
+export const DEFAULT_AGENT_MEDIA_FALLBACK_MB = 45
 
 export type Modality = (typeof MODALITIES)[number]
 export type CapabilityReport = 'supported' | 'unsupported' | 'unknown'
@@ -24,6 +25,8 @@ export interface ModalityConfig {
 
 export interface ModelConfig {
   modalities: Partial<Record<Modality, ModalityConfig>>
+  /** Decimal megabytes; zero disables tool-result media omission. */
+  agentMediaFallbackMB: number
   customBody?: Record<string, unknown>
 }
 
@@ -45,7 +48,7 @@ export interface ModelEntry {
 }
 
 export function createDefaultModelConfig(): ModelConfig {
-  return { modalities: {} }
+  return { modalities: {}, agentMediaFallbackMB: DEFAULT_AGENT_MEDIA_FALLBACK_MB }
 }
 
 /**

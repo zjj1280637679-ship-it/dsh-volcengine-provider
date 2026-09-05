@@ -17,7 +17,9 @@ import { ConfiguredVolcengineAdapter } from './configured-adapter.js'
 import { discoverModels } from './chat/discovery.js'
 import type { ResolveMediaBytes } from './chat/serialize.js'
 import type { VerbatimAttachmentRefLike } from './media.js'
-import { registerMediaCommand } from './media-command.js'
+import { OriginalVideoStaging, registerMediaFallbackRpc } from './media-fallback-rpc.js'
+import { registerLocalMediaCommand, registerMediaCommand } from './media-command.js'
+import { createOriginalMediaStore, type OriginalMediaStore } from './original-media-store.js'
 import { installCompatibleSettingsSection } from './settings-compat.js'
 import { inspectLlmHost } from './host-compat.js'
 
@@ -73,8 +75,14 @@ async function readVerbatimBytes(
   return data
 }
 
-function mediaResolver(ctx: Context): ResolveMediaBytes {
+function mediaResolver(ctx: Context, originals: OriginalMediaStore): ResolveMediaBytes {
   return async (block, signal) => {
+    if (originals.owns(block.attachment)) {
+      if (block.type !== 'volcengine-video' || block.mediaType !== 'video/mp4') {
+        throw new LlmError('The plugin-owned original media reference does not match an MP4 video block.', 'INVALID_MEDIA_REFERENCE')
+      }
+      return originals.read(block.attachment, signal)
+    }
     const attachments = ctx.get('attachments')
     if (attachments === undefined) throw new LlmError('Mount a Harness attachment provider to read media.', 'MEDIA_RESOLVER_UNAVAILABLE')
     if (block.type === 'image') return (await attachments.readImage(block.attachment, signal)).data
@@ -136,12 +144,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     return checked.value
   }
 
-  const adapter = new ConfiguredVolcengineAdapter({ route: routeFor, resolveKey, resolveMediaBytes: mediaResolver(ctx) })
+  const originals = createOriginalMediaStore(ctx)
+  const staging = new OriginalVideoStaging(originals)
+  const adapter = new ConfiguredVolcengineAdapter({ route: routeFor, resolveKey, resolveMediaBytes: mediaResolver(ctx, originals) })
   let registered: AdapterRegistrationHandle | undefined
   let directory: DirectoryRegistrationHandle | undefined
   let ownedProviders = new Set<string>()
   let ownedDirectory = new Set<string>()
+  registerMediaFallbackRpc(ctx, staging)
   registerMediaCommand(ctx, provider => ownedProviders.has(provider))
+  registerLocalMediaCommand(ctx, provider => ownedProviders.has(provider), staging)
   const entriesFor = (value: ResolvedConfig) => Object.entries(value.routes).map(([key, route]) => ({
     provider: providerId(key), displayName: route.name, settingsNs: SETTINGS_NS,
     settingsPath: ['routes', key],

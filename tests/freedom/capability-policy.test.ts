@@ -47,8 +47,15 @@ describe('freedom contract: modality policy', () => {
     const config = modelPolicy({ id: 'user-entered-model' })
 
     expect(config.modalities).toEqual({})
+    expect(config.agentMediaFallbackMB).toBe(45)
     expect(['image', 'video', 'audio'].every(modality =>
       !Object.hasOwn(config.modalities, modality))).toBe(true)
+  })
+
+  it('keeps the user-owned agent media fallback budget, including explicit disable', () => {
+    expect(modelPolicy({ id: 'default' }).agentMediaFallbackMB).toBe(45)
+    expect(modelPolicy({ id: 'disabled', agentMediaFallbackMB: 0 }).agentMediaFallbackMB).toBe(0)
+    expect(modelPolicy({ id: 'custom', agentMediaFallbackMB: 12.5 }).agentMediaFallbackMB).toBe(12.5)
   })
 
   it('treats an explicit inherit as unknown without consulting supplier feedback', () => {

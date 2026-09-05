@@ -22,7 +22,9 @@ export function buildChatCompletionsBody(
 ): RequestBody {
   const base: RequestBody = {
     model: options.model,
-    messages: structuredClone(options.messages),
+    // composeRequestBody owns the JSON-container copy. Avoid serializing the
+    // same potentially large data-URL graph once here and again during merge.
+    messages: options.messages,
     stream: options.stream ?? true,
   }
 
