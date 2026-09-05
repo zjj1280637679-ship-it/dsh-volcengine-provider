@@ -1,0 +1,17 @@
+{
+  "image.png": {
+    "mediaType": "image/png",
+    "bytes": 1848,
+    "sha256": "2f5a55452df4dbde0bacbd30dc8449a75e70df4dd1da94e593f3a918a78d3e49"
+  },
+  "audio.mp3": {
+    "mediaType": "audio/mpeg",
+    "bytes": 27629,
+    "sha256": "d9820b8c930a0f68c291fc1b6a7c1a5df3985a6631ce676533bd02e5b61496be"
+  },
+  "video.mp4": {
+    "mediaType": "video/mp4",
+    "bytes": 2381,
+    "sha256": "573ea1f96968c3f37fe12df641739d7cbfa5965f09b2864fae785a063b3bc2c6"
+  }
+}
