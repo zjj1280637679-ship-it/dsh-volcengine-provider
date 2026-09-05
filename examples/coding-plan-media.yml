@@ -3,17 +3,15 @@
 # 普通 API 和 Agent Plan 卡片仍可继续配置；未列出的模型可在 UI 手动添加。
 # 不预填任何输入模态：未设置表示未知且允许尝试，只有用户在 Models 卡片中
 # 明确 force_disable 才阻断。供应商反馈与运行时拒绝不会修改这里的设置。
-- insert:
-    - id: llm-volcengine
-      name: dsh-volcengine-provider
-      config:
-        routes:
-          standard:
-            kind: standard
-          agent-plan:
-            kind: agent-plan
-          coding-plan:
-            kind: coding-plan
-            models:
-              - id: doubao-seed-2.0-lite
-              - id: glm-5.3-flash
+- id: llm-volcengine
+  config:
+    routes:
+      standard:
+        kind: standard
+      agent-plan:
+        kind: agent-plan
+      coding-plan:
+        kind: coding-plan
+        models:
+          - id: doubao-seed-2.0-lite
+          - id: glm-5.3-flash

@@ -1,0 +1,7 @@
+# Installed bundle layer: register the host provider once with conservative
+# defaults. Users can replace this row in their profile patch or an explicit
+# --patch overlay when they want preconfigured routes or models.
+- insert:
+    - id: llm-volcengine
+      name: dsh-volcengine-provider
+      config: {}

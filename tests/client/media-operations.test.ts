@@ -5,6 +5,8 @@ import type { MediaDirectoryState, MediaServices } from '../../src/client/media-
 function setup() {
   let generation = 0
   let state: MediaDirectoryState = { current: { provider: 'user-route', model: 'unlisted-model' }, routable: true }
+  const selectionListeners = new Set<() => void>()
+  const generationListeners = new Set<() => void>()
   const services: MediaServices = {
     upload: { available: true, upload: vi.fn<MediaServices['upload']['upload']>(async (_session, file) => ({ ok: true, value: { receiptId: `receipt-${file.size}` } })) },
     commands: {
@@ -15,11 +17,23 @@ function setup() {
       listConfigurableProviders: vi.fn<MediaServices['llm']['listConfigurableProviders']>(async () => ({ ok: true, value: [{ provider: 'user-route', settingsNs: 'llm-volcengine' }] })),
       listProviders: vi.fn<MediaServices['llm']['listProviders']>(async () => ({ ok: true, value: [{ id: 'user-route' }] })),
     },
-    directory: { store: { getSnapshot: () => state, subscribe: () => () => {} }, load: vi.fn(async () => {}) },
-    canAddress: () => true, generation: () => generation,
+    directory: { store: {
+      getSnapshot: () => state,
+      subscribe: listener => { selectionListeners.add(listener); return () => { selectionListeners.delete(listener) } },
+    }, load: vi.fn(async () => {}) },
+    canAddress: () => true,
+    generation: {
+      getSnapshot: () => generation,
+      subscribe: listener => { generationListeners.add(listener); return () => { generationListeners.delete(listener) } },
+    },
   }
-  return { services, operations: createMediaOperations('session-a', services), reset: () => { generation += 1 },
-    select: (provider: string, model = 'new-model') => { state = { ...state, current: { provider, model } } } }
+  return { services, operations: createMediaOperations('session-a', services), reset: () => {
+    generation += 1
+    for (const listener of [...generationListeners]) listener()
+  }, select: (provider: string, model = 'new-model') => {
+    state = { ...state, current: { provider, model } }
+    for (const listener of [...selectionListeners]) listener()
+  } }
 }
 const drafts = () => [
   { file: new File([new Uint8Array([137, 80, 78, 71])], 'do-not-decode.png', { type: 'image/png' }), mediaType: 'image/png' },
@@ -42,7 +56,8 @@ describe('original media public-service bridge', () => {
     expect(new Uint8Array(await calls[1]![1].arrayBuffer())).toEqual(new Uint8Array([0, 255, 0, 255, 42]))
     expect(fixture.services.commands.execute).toHaveBeenCalledWith('session-a',
       '/ark-media image/png,audio/x-vendor=vendor_format -- Question -- still plain text',
-      [{ type: 'file', receiptId: 'receipt-4' }, { type: 'file', receiptId: 'receipt-5' }], signal)
+      [{ type: 'file', receiptId: 'receipt-4' }, { type: 'file', receiptId: 'receipt-5' }],
+      expect.any(AbortSignal))
   })
 
   it('keeps completed receipts across a later upload failure and command rejection', async () => {
@@ -90,6 +105,75 @@ describe('original media public-service bridge', () => {
     await send()
     expect(fixture.services.upload.upload).toHaveBeenCalledTimes(2)
     expect(vi.mocked(fixture.services.commands.execute).mock.calls[0]![2]).toEqual([{ type: 'file', receiptId: 'receipt-4' }])
+  })
+
+  it('reports an unknown submission state when the selected model changes during command execution', async () => {
+    const fixture = setup()
+    let started!: () => void
+    const executing = new Promise<void>(resolve => { started = resolve })
+    let release!: () => void
+    let delivered = false
+    let executeSignal: AbortSignal | undefined
+    vi.mocked(fixture.services.commands.execute).mockImplementationOnce(async (_session, _line, _attachments, signal) => {
+      executeSignal = signal
+      started()
+      await new Promise<void>((resolve, reject) => {
+        release = resolve
+        const abort = (): void => { reject(signal?.reason) }
+        if (signal?.aborted === true) abort()
+        else signal?.addEventListener('abort', abort, { once: true })
+      })
+      delivered = true
+      return { ok: true, value: { result: { kind: 'success' } } }
+    })
+    const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
+    await executing
+    fixture.select('user-route', 'switched-model')
+    await expect(sending).rejects.toThrow('提交状态未确认')
+    release()
+    expect(executeSignal?.aborted).toBe(true)
+    expect(delivered).toBe(false)
+    expect(fixture.services.commands.execute).toHaveBeenCalledOnce()
+  })
+
+  it('accepts an authoritative success returned after a model switch during command execution', async () => {
+    const fixture = setup()
+    let started!: () => void
+    const executing = new Promise<void>(resolve => { started = resolve })
+    let release!: () => void
+    let executeSignal: AbortSignal | undefined
+    vi.mocked(fixture.services.commands.execute).mockImplementationOnce(async (_session, _line, _attachments, signal) => {
+      executeSignal = signal
+      started()
+      await new Promise<void>(resolve => { release = resolve })
+      return { ok: true, value: { result: { kind: 'success' } } }
+    })
+    const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
+    await executing
+    fixture.select('user-route', 'switched-model')
+    release()
+    await expect(sending).resolves.toBeUndefined()
+    expect(executeSignal?.aborted).toBe(true)
+    expect(fixture.services.commands.execute).toHaveBeenCalledOnce()
+  })
+
+  it('reports an unknown submission state for an error envelope returned after cancellation', async () => {
+    const fixture = setup()
+    let started!: () => void
+    const executing = new Promise<void>(resolve => { started = resolve })
+    vi.mocked(fixture.services.commands.execute).mockImplementationOnce(async (_session, _line, _attachments, signal) => {
+      started()
+      return await new Promise(resolve => {
+        const cancelled = (): void => resolve({ ok: false, error: { message: 'RPC response was cancelled' } })
+        if (signal?.aborted === true) cancelled()
+        else signal?.addEventListener('abort', cancelled, { once: true })
+      })
+    })
+    const sending = fixture.operations.send(drafts().slice(0, 1), '', new AbortController().signal, () => {})
+    await executing
+    fixture.select('user-route', 'switched-model')
+    await expect(sending).rejects.toThrow('提交状态未确认')
+    expect(fixture.services.commands.execute).toHaveBeenCalledOnce()
   })
 
   it('makes no upload or execution for invalid declarations or a non-owned provider; subagents make no directory RPC', async () => {

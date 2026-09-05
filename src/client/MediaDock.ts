@@ -17,6 +17,7 @@ const button: CSSProperties = { font: 'inherit', padding: '6px 10px', cursor: 'p
 /** A separate, optional media draft; the host composer and its attachment rail keep their own state. */
 export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
   const selection = useSyncExternalStore(operations.selection.subscribe, operations.selection.getSnapshot)
+  const generation = useSyncExternalStore(operations.generation.subscribe, operations.generation.getSnapshot)
   const [files, setFiles] = useState<MediaDraftFile[]>([])
   const [prompt, setPrompt] = useState('')
   const [ready, setReady] = useState(false)
@@ -36,6 +37,9 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
     return () => { mounted.current = false; pending.current?.abort() }
   }, [operations])
   useEffect(() => {
+    pending.current?.abort()
+  }, [operations, provider, model, selection.routable, addressable, generation])
+  useEffect(() => {
     const controller = new AbortController()
     setReady(false)
     if (!addressable) {
@@ -50,7 +54,7 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
       if (!controller.signal.aborted) setAvailability(error instanceof Error ? error.message : '媒体入口暂不可用。')
     })
     return () => controller.abort()
-  }, [operations, provider, model, selection.routable, addressable, retry])
+  }, [operations, provider, model, selection.routable, addressable, generation, retry])
 
   let invalid = ''
   if (files.length > 0) {

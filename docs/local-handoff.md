@@ -32,13 +32,15 @@ npm pack
 ```powershell
 dsh --version
 dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.1.tgz
-dsh --profile web --patch ./examples/coding-plan-media.yml --dump-config
-dsh --profile web --patch ./examples/coding-plan-media.yml
+dsh --profile web --dump-config
+dsh --profile web
 ```
 
-打开启动日志给出的本机地址。包没有 `dsh.bundle`，所以安装依赖后仍需 patch 启用。
+打开启动日志给出的本机地址。包内置 `dsh.bundle` 和 `cordis.patch.yml`；安装成功后应在 dump 中看到 `dsh-volcengine-provider` 层和 `llm-volcengine` 行，不再需要额外 patch 才能启用。
 
-`coding-plan-media.yml` 只预填用户选定的 `doubao-seed-2.0-lite` 和 `glm-5.3-flash`，**不预填模态**。要空白模型卡，可将上面两条命令的 patch 改为 `examples/cordis.yml`；两份二选一，不能重复加载。若以后把插件条目加入本机 profile 的 `cordis.patch.yml`，也不要再叠加同一份 `--patch`。
+`coding-plan-media.yml` 只预填用户选定的 `doubao-seed-2.0-lite` 和 `glm-5.3-flash`，**不预填模态**。需要该示例时，给上面的 dump 和启动命令另加 `--patch ./examples/coding-plan-media.yml`；不加就是空白模型卡。覆盖层会替换 `llm-volcengine` 行的完整配置，不要再叠加 `examples/cordis.yml` 或在 profile 中重复插入同一行。
+
+也可锁定可信 commit 从 GitHub 安装；此时 `prepare` 会在本机执行构建，pnpm 10 及以上需要按 CLI 提示在目标 profile 的 `pnpm-workspace.yaml` 中明确授权该包。预编译 `.tgz` 不需要这项构建授权。
 
 ## 3. 在 Models 中配置
 
@@ -63,10 +65,10 @@ GitHub Actions 中的 `ARK_CODING_PLAN_API_KEY` 不会随克隆下发到电脑�
 
 此前真实 Coding Plan 文本、图片和视频链路已联调；lite 音频由当前通道返回“不支持音频输入”。这只证明该次服务端拒绝，不能声称真实音频理解已成功，也不能据此关闭接口或修改模态。原始媒体上传失败／取消会保留草稿；命令一旦被宿主接收会清空媒体草稿，接收并不等于模型最终回复成功，请以会话中的结果为准。
 
-## 尚未验收的边界
+## 当前验收状态与剩余边界
 
-- 完整 Harness Web 安装到回复的实机流程仍待本机验收；此前环境中的官方构建因 `tsx` IPC `EPERM` 受阻，不能用组件测试替代实机结果。
+- 2026-09-06 已在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成预编译包安装、bundle 自动激活、Web 配置、真实 Coding Plan 回复、同 profile 重启及最终包重装复验；完整证据和 Windows 宿主兼容说明见 [完整宿主闭环报告](harness-web-loop-2026-09-06.md)。
 - 本阶段媒体闭环指用户主动添加的附件。宿主 `read_image` 工具及 MCP／ACP 的部分图片路径要求明确的图片能力声明；本插件为保留未知能力而省略封闭的 `inputModalities`，不承诺这些工具来源的图片链路已打通，也不为此改造宿主。
 - 历史中的专用媒体块目前显示为 JSON；导出会话不保证携带媒体字节、可在另一台电脑完整重放。保留原本机 `DSH_HOME` 中的附件数据。
 
-遇到失败时，记录宿主版本、插件 commit、通道／模型 ID、文件 MIME、完整错误码与请求 ID；不要提供 API Key。已有证据见 [第一阶段基本闭环](phase1-basic-loop-2026-09-05.md)。后续从本机验收结果继续，不增加第一阶段功能目标。
+遇到失败时，记录宿主版本、插件 commit、通道／模型 ID、文件 MIME、完整错误码与请求 ID；不要提供 API Key。已有证据见 [第一阶段基本闭环](phase1-basic-loop-2026-09-05.md)和[完整宿主闭环](harness-web-loop-2026-09-06.md)。

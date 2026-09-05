@@ -16,7 +16,18 @@ export function registerMediaDock(ctx: Context): void {
       || typeof llm.listProviders !== 'function' || typeof directories?.directoryFor !== 'function'
       || typeof sessions?.subagentAddress !== 'function' || typeof sessions.scope !== 'function') return
     let generation = 0
-    scope.on('connection/reset' as never, (() => { generation += 1 }) as never)
+    const generationListeners = new Set<() => void>()
+    const generationStore: MediaServices['generation'] = {
+      getSnapshot: () => generation,
+      subscribe: listener => {
+        generationListeners.add(listener)
+        return () => { generationListeners.delete(listener) }
+      },
+    }
+    scope.on('connection/reset' as never, (() => {
+      generation += 1
+      for (const listener of [...generationListeners]) listener()
+    }) as never)
     // The slot is a published list/session face. Keep its optional contract out of baseline type dependencies.
     const slots = scope.slots as unknown as {
       inject(name: string, register: () => () => void): void
@@ -27,7 +38,7 @@ export function registerMediaDock(ctx: Context): void {
       inject: sessionId => ({ operations: createMediaOperations(sessionId, {
         upload, commands, llm, directory: directories.directoryFor(sessionId),
         canAddress: () => sessions.scope(sessionId) !== undefined && sessions.subagentAddress(sessionId) === undefined,
-        generation: () => generation,
+        generation: generationStore,
       }) }),
     }, MediaDock))
   })

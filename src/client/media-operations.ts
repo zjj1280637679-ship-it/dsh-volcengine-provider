@@ -26,12 +26,13 @@ export interface MediaServices {
   }
   directory: { store: ReadableStore<MediaDirectoryState>; load(): Promise<unknown> }
   canAddress(): boolean
-  generation(): number
+  generation: ReadableStore<number>
 }
 
 export interface MediaOperations {
   readonly sessionId: string
   readonly selection: ReadableStore<MediaDirectoryState>
+  readonly generation: ReadableStore<number>
   check(signal?: AbortSignal): Promise<MediaSelection>
   send(files: readonly MediaDraftFile[], prompt: string, signal: AbortSignal,
     progress: (value: MediaProgress) => void): Promise<void>
@@ -84,41 +85,84 @@ export function createMediaOperations(sessionId: string, services: MediaServices
     return selected
   }
   return {
-    sessionId, selection: services.directory.store, check,
+    sessionId, selection: services.directory.store, generation: services.generation, check,
     async send(files, prompt, signal, progress) {
       const line = mediaCommandLine(files, prompt)
-      const generation = services.generation()
-      const selected = await check(signal)
-      const guard = (): void => {
-        abort(signal)
-        if (generation !== services.generation()) throw new Error('连接已更新，请重新发送以取得新的上传凭证。')
-        const current = services.directory.store.getSnapshot().current
-        if (current === null || !same(selected, current)) throw new Error('模型已切换，文件已保留。请确认当前模型后重新发送。')
-      }
-      const attachments: { type: 'file'; receiptId: string }[] = []
-      for (const item of files) {
-        guard()
-        let receipt = receipts.get(item.file)
-        if (receipt?.generation !== generation) {
-          const result = await services.upload.upload(sessionId, item.file, item.file.name, signal,
-            value => progress({ name: item.file.name, ...value }))
-          const value = unwrap(result)
-          // Cache a completed upload even when cancellation arrives immediately after it.
-          receipt = { generation, receiptId: value.receiptId }
-          receipts.set(item.file, receipt)
+      const generation = services.generation.getSnapshot()
+      const initial = services.directory.store.getSnapshot().current
+      const controller = new AbortController()
+      const cancel = (message: string): void => {
+        if (!controller.signal.aborted) {
+          controller.abort(new DOMException(message, 'AbortError'))
         }
-        attachments.push({ type: 'file', receiptId: receipt.receiptId })
-        guard()
       }
-      const confirmed = await check(signal)
-      if (!same(selected, confirmed)) throw new Error('模型已切换，请确认当前模型后重新发送。')
-      guard()
-      let result: Awaited<ReturnType<MediaServices['commands']['execute']>>
-      try { result = await services.commands.execute(sessionId, line, attachments, signal) }
-      catch { throw new Error('提交状态未确认，文件已保留。请先查看会话是否收到消息，再决定是否重试。') }
-      const execution = unwrap(result)
-      if (execution === undefined) throw new Error('原始媒体命令不可用，文件已保留。')
-      if (execution.result.kind !== 'success') throw new Error(execution.result.text ?? '发送失败，文件已保留。')
+      const relayAbort = (): void => { controller.abort(signal.reason) }
+      if (signal.aborted) relayAbort()
+      else signal.addEventListener('abort', relayAbort, { once: true })
+      const invalidate = (): void => {
+        const state = services.directory.store.getSnapshot()
+        if (generation !== services.generation.getSnapshot()) {
+          cancel('连接已更新，请重新发送以取得新的上传凭证。')
+        } else if (!services.canAddress()) {
+          cancel('当前会话不再支持原始媒体发送。')
+        } else if (initial === null || state.current === null || !same(initial, state.current)) {
+          cancel('模型已切换，文件已保留。请确认当前模型后重新发送。')
+        } else if (state.routable === false) {
+          cancel('当前火山方舟模型已不可用，请重新选择后发送。')
+        }
+      }
+      const stopSelection = services.directory.store.subscribe(invalidate)
+      const stopGeneration = services.generation.subscribe(invalidate)
+      try {
+        invalidate()
+        abort(controller.signal)
+        const selected = await check(controller.signal)
+        if (initial === null || !same(initial, selected)) {
+          cancel('模型已切换，文件已保留。请确认当前模型后重新发送。')
+        }
+        const guard = (): void => {
+          invalidate()
+          abort(controller.signal)
+        }
+        const attachments: { type: 'file'; receiptId: string }[] = []
+        for (const item of files) {
+          guard()
+          let receipt = receipts.get(item.file)
+          if (receipt?.generation !== generation) {
+            const result = await services.upload.upload(sessionId, item.file, item.file.name, controller.signal,
+              value => progress({ name: item.file.name, ...value }))
+            const value = unwrap(result)
+            // Cache a completed upload even when cancellation arrives immediately after it.
+            receipt = { generation, receiptId: value.receiptId }
+            receipts.set(item.file, receipt)
+          }
+          attachments.push({ type: 'file', receiptId: receipt.receiptId })
+          guard()
+        }
+        const confirmed = await check(controller.signal)
+        if (!same(selected, confirmed)) {
+          cancel('模型已切换，文件已保留。请确认当前模型后重新发送。')
+        }
+        guard()
+        let execution: Awaited<ReturnType<MediaServices['commands']['execute']>> extends Result<infer T> ? T : never
+        try {
+          const result = await services.commands.execute(sessionId, line, attachments, controller.signal)
+          execution = unwrap(result)
+        }
+        catch (error) {
+          throw new Error('提交状态未确认，文件已保留。请先查看会话是否收到消息，再决定是否重试。', { cause: error })
+        }
+        // Once execute() starts, the host may have synchronously accepted the
+        // command even if its RPC response is later aborted. A returned result
+        // is authoritative; an exception is deliberately reported as unknown
+        // above so the UI never calls a possibly delivered command "cancelled".
+        if (execution === undefined) throw new Error('原始媒体命令不可用，文件已保留。')
+        if (execution.result.kind !== 'success') throw new Error(execution.result.text ?? '发送失败，文件已保留。')
+      } finally {
+        signal.removeEventListener('abort', relayAbort)
+        stopSelection()
+        stopGeneration()
+      }
     },
   }
 }

@@ -276,6 +276,42 @@ describe('persisted media through the real Harness runtime and Ark HTTP boundary
     expect(harness.fake.requests).toHaveLength(0)
   })
 
+  it('rejects truncated or overflowing attachment streams before sending HTTP', async () => {
+    const harness = await boot()
+    const attachment = await persistFile(harness.root, 'length-checked.mp4', MP4)
+    const mismatches = [
+      { ...attachment, bytes: attachment.bytes - 1 },
+      { ...attachment, bytes: attachment.bytes + 1 },
+    ]
+
+    for (const mismatch of mismatches) {
+      expect((await dispatch(harness, [{
+        type: 'volcengine-video', attachment: mismatch, mediaType: 'video/mp4',
+      }])).at(-1)).toMatchObject({
+        type: 'finish', reason: { kind: 'error', failure: { code: 'MEDIA_SIZE_MISMATCH' } },
+      })
+    }
+    expect(harness.attachments.reads).toEqual([
+      attachment.attachmentId,
+      attachment.attachmentId,
+    ])
+    expect(harness.attachments.closedReads).toEqual(harness.attachments.reads)
+    expect(harness.fake.requests).toHaveLength(0)
+  })
+
+  it('rejects an invalid declared attachment size before opening the file', async () => {
+    const harness = await boot()
+    const attachment = await persistFile(harness.root, 'invalid-size.mp3', MP3)
+    const invalid = { ...attachment, bytes: Number.MAX_SAFE_INTEGER + 1 }
+    expect((await dispatch(harness, [{
+      type: 'volcengine-audio', attachment: invalid, mediaType: 'audio/mpeg',
+    }])).at(-1)).toMatchObject({
+      type: 'finish', reason: { kind: 'error', failure: { code: 'INVALID_MEDIA_REFERENCE' } },
+    })
+    expect(harness.attachments.reads).toEqual([])
+    expect(harness.fake.requests).toHaveLength(0)
+  })
+
   it('rejects each explicitly disabled media modality before reading attachments or sending HTTP', async () => {
     const harness = await boot({ modalities: {
       image: 'force_disable', video: 'force_disable', audio: 'force_disable',

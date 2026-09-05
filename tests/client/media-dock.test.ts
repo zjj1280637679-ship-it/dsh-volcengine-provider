@@ -19,6 +19,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 function operations(): MediaOperations {
   const state = { current: { provider: 'custom-ark-route', model: 'my-model' }, routable: true }
   return { sessionId: 'session-one', selection: { getSnapshot: () => state, subscribe: () => () => {} },
+    generation: { getSnapshot: () => 0, subscribe: () => () => {} },
     check: vi.fn(async () => state.current), send: vi.fn(async () => {}) }
 }
 function button(text: string): HTMLButtonElement {

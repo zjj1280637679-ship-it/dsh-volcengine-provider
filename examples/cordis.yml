@@ -1,9 +1,7 @@
-# 先安装本地构建的 .tgz，再由已安装 Harness 的 web profile 加载：
+# 包内 cordis.patch.yml 已自动创建默认行；通常不需要本文件。
+# 本文件只用于显式把已安装 bundle 的同 id 行恢复为默认配置：
 # dsh --profile web --patch /absolute/path/to/dsh-volcengine-provider/examples/cordis.yml
 # config: {} 创建普通 API、Agent Plan、Coding Plan 三张默认卡片。
 # 在 Models 设置页填写各自的密钥和模型 ID；配置文件仅保存凭据引用。
-# 常驻启用时，把此条目追加到 profile 的 cordis.patch.yml，勿再重复 --patch。
-- insert:
-    - id: llm-volcengine
-      name: dsh-volcengine-provider
-      config: {}
+- id: llm-volcengine
+  config: {}

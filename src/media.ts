@@ -81,7 +81,7 @@ export interface ParsedDataUrl {
 
 /** Transparent encoding only: raw bytes become base64 without media transformation. */
 export function encodeVerbatimBase64(data: Uint8Array): string {
-  return Buffer.from(data).toString('base64')
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64')
 }
 
 export function decodeVerbatimBase64(data: string): Uint8Array {

@@ -36,15 +36,15 @@ pnpm install --frozen-lockfile
 pnpm run build
 npm pack
 dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.1.tgz
-dsh --profile web --patch ./examples/cordis.yml --dump-config
-dsh --profile web --patch ./examples/cordis.yml
+dsh --profile web --dump-config
+dsh --profile web
 ```
 
 这些相对路径以当前仓库根目录为前提；在其他目录执行时改为绝对路径。`dsh plugin` 使用 pnpm 管理 profile 依赖，因而要求 pnpm 在 PATH 中。`web` profile 首次使用会按官方模板初始化。
 
-当前包导出宿主 `.` 入口和浏览器 `./client` 入口，浏览器产物以官方 `ModuleLoader` factory 格式注册。`dsh.client` 声明 Models 与 Remotes 客户端依赖；宿主加载该插件行后，Web 客户端发现其卡片。包没有声明 `dsh.bundle`，所以安装时关于未自动激活组合层的提示是预期行为，仍须启用示例 patch。
+当前包导出宿主 `.` 入口、浏览器 `./client` 入口和 `./cordis.patch.yml`。浏览器产物以官方 `ModuleLoader` factory 格式注册，`dsh.client` 声明 Models 与 Remotes 客户端依赖；`dsh.bundle.patch` 让 `dsh plugin add` 自动把插件配置层加入 profile，Web 客户端随后发现其卡片。
 
-常驻使用时，将下面条目追加到 `$DSH_HOME/profiles/web/cordis.patch.yml` 的现有 YAML 数组中；不要覆盖用户已有条目，也不要再次嵌套成另一份数组：
+安装包内的默认配置层为：
 
 ```yaml
 - insert:
@@ -53,7 +53,7 @@ dsh --profile web --patch ./examples/cordis.yml
       config: {}
 ```
 
-随后启动 `dsh --profile web`，在 Models 页面完成密钥及模型配置。`config: {}` 使用三个默认卡片。已经常驻启用时，不再叠加同一份 `--patch`，避免重复插入。
+随后启动 `dsh --profile web`，在 Models 页面完成密钥及模型配置。`config: {}` 使用三个默认卡片。若用户要覆盖配置，可在 profile 的 `cordis.patch.yml` 中重述完整 `llm-volcengine` 行，或使用一次性的 `--patch` overlay；后层按行替换，不会深度合并 `config`。
 
 如果偏好部署时只声明 Coding Plan，可以将该插件行的 `config` 改为：
 
@@ -107,7 +107,7 @@ customBody: |-
 - 供应商 Feedback／Runtime Observations 与用户 Config 分开保存；未来只读查看器不能自行更改模态、容量或请求体。
 - 新通道通过 `routes` 数据及官方目录注册进入 UI，不修改 Harness 页面内部组件。
 
-## 验证与尚未完成的链路
+## 验证状态与边界
 
 ```sh
 pnpm run typecheck
@@ -116,11 +116,11 @@ pnpm run build
 pnpm run test:package
 ```
 
-本地验证包括：三通道路径和凭据隔离、未知模型与自定义参数、媒体字节一致性、Chat 流翻译、公开 Cordis/LLM 运行时注册与热更新、Loader/Include 配置组合、卡片编辑和未知字段保存。宿主集成使用测试内存 settings／credentials 提供方；Loader 测试映射模块到源码；卡片测试使用 DOM 环境并验证官方 SlotRegistry 的注册／卸载。`test:package` 打包、解包并检查宿主导出、浏览器 ModuleLoader factory、类型声明和包内容，复用当前安装的 peer 依赖；这些验证不等于真实方舟或完整 Harness Web profile 启动验收。
+本地验证包括：三通道路径和凭据隔离、未知模型与自定义参数、媒体字节一致性、Chat 流翻译、公开 Cordis/LLM 运行时注册与热更新、Loader/Include 配置组合、卡片编辑和未知字段保存。宿主集成使用测试内存 settings／credentials 提供方；Loader 测试映射模块到源码；卡片测试使用 DOM 环境并验证官方 SlotRegistry 的注册／卸载。`test:package` 打包、解包并检查 bundle 元数据与 patch、宿主导出、浏览器 ModuleLoader factory、类型声明、直接覆盖示例和包内容；真正的自动激活另由实际 `plugin add` 与 dump/启动结果证明。这些自动化验证本身不替代实机结果；独立的 Harness `0.1.3-alpha.1` Web profile 已在 2026-09-06 完成真实 Coding Plan 文本闭环，见[完整宿主闭环报告](harness-web-loop-2026-09-06.md)。
 
 第四步仅具备媒体读取扩展；[第五步](step5-media-input.md)进一步添加显式 MIME 的 `/ark-media` 输入命令、原图文件块和正确的 Chat 音频编码。命令按 commands 与 `readFileStream` 公共能力存在与否注册；npm `0.1.2-rc.1` 仍缺少原文件接口。普通图片经 `readImage` 读取时可能已被宿主规范化，严格原图需官方 file upload 文件链。媒体模态未设置时仍允许尝试，只有用户明确 `force_disable` 才阻断。原字节透传的本地验证不能替代完整 Web 或真实媒体 API 验收。
 
-第四步完成时尚无真实 API 密钥，因此该阶段没有发送方舟请求。后续 Coding Plan 的文本与媒体冒烟结果分别见 [文本实测](live-coding-plan-2026-09-05.md) 和 [媒体实测](live-coding-plan-media-2026-09-05.md)；这些结果只覆盖当次账号、通道、模型别名和样本。当前保留 `private: true`，不进行 npm 发布或正式 Release。
+第四步完成时尚无真实 API 密钥，因此该阶段没有发送方舟请求。后续 Coding Plan 的文本与媒体冒烟结果分别见 [文本实测](live-coding-plan-2026-09-05.md) 和 [媒体实测](live-coding-plan-media-2026-09-05.md)，完整 Web 安装闭环见[完整宿主闭环报告](harness-web-loop-2026-09-06.md)；这些结果只覆盖当次账号、通道、模型别名和样本。当前保留 `private: true`，不进行 npm 发布或正式 Release。
 
 ## 资料依据
 

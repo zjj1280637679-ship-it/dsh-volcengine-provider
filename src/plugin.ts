@@ -21,6 +21,49 @@ interface VerbatimFileReader {
   readFileStream(ref: VerbatimAttachmentRefLike, signal?: AbortSignal): AsyncIterable<Uint8Array>
 }
 
+function expectedMediaBytes(ref: VerbatimAttachmentRefLike): number {
+  if (!Number.isSafeInteger(ref.bytes) || ref.bytes < 0) {
+    throw new LlmError('The attachment byte length is invalid.', 'INVALID_MEDIA_REFERENCE')
+  }
+  return ref.bytes
+}
+
+async function readVerbatimBytes(
+  files: VerbatimFileReader,
+  ref: VerbatimAttachmentRefLike,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const expected = expectedMediaBytes(ref)
+  let data: Buffer
+  try {
+    // The host reference already carries the admitted byte length. Allocate
+    // once and fill it directly instead of retaining every stream chunk and
+    // copying them again through Buffer.concat().
+    data = Buffer.allocUnsafe(expected)
+  } catch (cause) {
+    throw new LlmError(
+      'The attachment cannot be represented in this Node.js process.',
+      'MEDIA_SIZE_UNREPRESENTABLE',
+      { cause },
+    )
+  }
+
+  let offset = 0
+  for await (const chunk of files.readFileStream(ref, signal)) {
+    signal?.throwIfAborted()
+    if (offset + chunk.byteLength > expected) {
+      throw new LlmError('The attachment stream exceeded its declared byte length.', 'MEDIA_SIZE_MISMATCH')
+    }
+    data.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  signal?.throwIfAborted()
+  if (offset !== expected) {
+    throw new LlmError('The attachment stream ended before its declared byte length.', 'MEDIA_SIZE_MISMATCH')
+  }
+  return data
+}
+
 function mediaResolver(ctx: Context): ResolveMediaBytes {
   return async (block, signal) => {
     const attachments = ctx.get('attachments')
@@ -30,12 +73,7 @@ function mediaResolver(ctx: Context): ResolveMediaBytes {
     if (typeof files.readFileStream !== 'function') {
       throw new LlmError('This Harness attachment provider cannot read original media files.', 'MEDIA_RESOLVER_UNAVAILABLE')
     }
-    const chunks: Uint8Array[] = []
-    for await (const chunk of files.readFileStream(block.attachment, signal)) {
-      signal?.throwIfAborted()
-      chunks.push(chunk)
-    }
-    return Buffer.concat(chunks)
+    return readVerbatimBytes(files as VerbatimFileReader, block.attachment, signal)
   }
 }
 

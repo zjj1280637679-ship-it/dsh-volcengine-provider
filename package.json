@@ -18,7 +18,7 @@
     "test:ci": "vitest run tests/freedom tests/fake-ark tests/adapter tests/plugin tests/client",
     "build": "node scripts/build.mjs",
     "test:package": "node scripts/verify-package.mjs",
-    "prepack": "pnpm build"
+    "prepare": "node scripts/build.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
@@ -72,9 +72,11 @@
       "types": "./dist/types/client/index.d.ts",
       "default": "./dist/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
+    "cordis.patch.yml",
     "dist",
     "docs",
     "examples",
@@ -82,6 +84,9 @@
     "LICENSE"
   ],
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings-models",
