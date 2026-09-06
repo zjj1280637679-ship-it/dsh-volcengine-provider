@@ -170,20 +170,20 @@ export class VolcengineChatAdapter extends LlmAdapter {
         release()
       }
     }
-    if (!response.ok) throw await providerHttpError(response)
+    if (!response.ok) throw await providerHttpError(response, options.signal)
 
     if (responseIsSse(response)) {
       if (response.body === null) {
         throw new LlmError('Volcengine Ark returned an empty SSE body.', 'EMPTY_RESPONSE_BODY')
       }
-      yield* translateSsePayloads(parseSse(response.body))
+      yield* translateSsePayloads(parseSse(response.body, options.signal), response)
       return
     }
 
     // Custom/raw request bodies are allowed to set stream:false or otherwise
     // select a non-SSE Chat response. Preserve that freedom and translate the
     // complete JSON response back into the same Harness chunk protocol.
-    const completion = await parseJsonResponse<WireCompletion>(response)
-    yield* translateCompletion(completion)
+    const completion = await parseJsonResponse<WireCompletion>(response, options.signal)
+    yield* translateCompletion(completion, response)
   }
 }

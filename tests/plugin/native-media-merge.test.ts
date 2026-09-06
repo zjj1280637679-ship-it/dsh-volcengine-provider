@@ -1,5 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { formatNativeMediaMarker } from '../../src/native-media-marker.js'
@@ -14,6 +17,8 @@ import type {
   MaterializedNativeMediaFile,
   NativeMediaBundleStatus,
 } from '../../src/native-media-staging.js'
+import { NativeMediaStaging } from '../../src/native-media-staging.js'
+import { OriginalMediaStore } from '../../src/original-media-store.js'
 
 const SESSION = 'session-one'
 const PROVIDER = 'volcengine-coding-plan'
@@ -22,9 +27,13 @@ const FIRST = '1'.repeat(32)
 const SECOND = '2'.repeat(32)
 
 const contexts: Context[] = []
+const durableStagings: NativeMediaStaging[] = []
+const roots: string[] = []
 afterEach(async () => {
   vi.useRealTimers()
   for (const ctx of contexts.splice(0).reverse()) await ctx.fiber.dispose()
+  for (const staging of durableStagings.splice(0)) await staging.dispose()
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
 function context(): Context {
@@ -137,7 +146,60 @@ function textOf(message: UserMessage): string {
   return message.content.filter(block => block.type === 'text').map(block => block.text).join('')
 }
 
+async function durableStaging(): Promise<NativeMediaStaging> {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-native-merge-ownership-'))
+  roots.push(root)
+  const staging = new NativeMediaStaging(new OriginalMediaStore(root))
+  durableStagings.push(staging)
+  const handle = await staging.begin({
+    sessionId: SESSION, bundleId: FIRST, expectedProvider: PROVIDER, expectedModel: MODEL,
+    files: [{ name: 'original.png', bytes: 3, modality: 'image', mediaType: 'image/png' }],
+  })
+  await staging.append({
+    sessionId: SESSION, bundleId: FIRST, fileId: handle.files[0]!.fileId,
+    offset: 0, data: Uint8Array.of(1, 2, 3),
+  })
+  await staging.commit(SESSION, FIRST)
+  return staging
+}
+
 describe('native composer media merge', () => {
+  it.each(['claim-conflict', 'duplicate', 'untrusted', 'malformed'] as const)(
+    'keeps the original message’s durable media when another message fails with %s', async failure => {
+      const staging = await durableStaging()
+      const merger = new NativeMediaMessageMerger(context(), staging, provider => provider === PROVIDER)
+      const marker = formatNativeMediaMarker(FIRST)
+      const original = direct(`${marker} original question`)
+      await staging.claim(SESSION, FIRST, original.id)
+      const text = failure === 'duplicate' ? `${marker} ${marker} other question`
+        : failure === 'malformed' ? `other question ${marker}` : `${marker} other question`
+      const competing = createUserMessage({
+        content: [{ type: 'text', text }],
+        source: failure === 'untrusted' ? { kind: 'plugin', plugin: 'fixture' } : { kind: 'user' },
+      })
+
+      const rejected = (await merger.merge(agent(), [competing], new AbortController().signal))[0]!
+      await merger.whenConfirmationsIdle()
+      expect(textOf(rejected)).toContain('VOLCENGINE_MEDIA_OMITTED')
+      expect(textOf(rejected)).toContain('other question')
+      expect(await staging.status(SESSION, FIRST)).toMatchObject({ state: 'claimed', messageId: original.id })
+      const materialized = await staging.materialize(SESSION, FIRST, original.id, PROVIDER, MODEL)
+      expect(materialized).toBeDefined()
+      expect(await staging.store.read(materialized!.files[0]!.attachment)).toEqual(Uint8Array.of(1, 2, 3))
+      expect(await staging.confirm(SESSION, FIRST, original.id)).toBe(true)
+    },
+  )
+
+  it.each([false, true])('still cleans a failed message’s own bundle (claimed: %s)', async claimed => {
+    const staging = await durableStaging()
+    const merger = new NativeMediaMessageMerger(context(), staging, provider => provider === PROVIDER)
+    const message = direct(`malformed placement ${formatNativeMediaMarker(FIRST)}`)
+    if (claimed) await staging.claim(SESSION, FIRST, message.id)
+    await merger.merge(agent(), [message], new AbortController().signal)
+    await merger.whenConfirmationsIdle()
+    expect(await staging.status(SESSION, FIRST)).toBeUndefined()
+  })
+
   it('reuses the accepted native message and inserts every bundle at its marker position', async () => {
     const ctx = context()
     const staging = stagingFixture()

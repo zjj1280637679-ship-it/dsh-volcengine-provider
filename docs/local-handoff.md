@@ -1,4 +1,4 @@
-# 本机接手：alpha.9 火山方舟插件
+# 本机接手：alpha.10 火山方舟插件
 
 目标是：配置方舟供应商 → 选模型 → 用主输入框旁的彩色 `+` 添加原始媒体 → 与文本作为同一消息发送 → 收到回复或真实错误 → 完整关闭并重启同一个 Harness 后继续使用。
 
@@ -16,17 +16,26 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 3080,3081 | Sele
 
 ## 2. 构建与安装
 
-完整代码已合入默认分支，并以 [`v0.1.0-alpha.9`](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.9) GitHub 预发布版交付。安装时使用该 Release 的预编译 `.tgz`，并核对版本标签、候选 commit 和包 SHA-256；不要把旧 alpha 报告当成本次候选。
+完整代码已合入默认分支，并以 [`v0.1.0-alpha.10`](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.10) GitHub 预发布版交付。安装时使用该 Release 的预编译 `.tgz`，并核对版本标签、候选 commit 和包 SHA-256；不要把旧 alpha 报告当成本次候选。
+
+从 Release 下载预编译包时不需要在本机先编译。在下载目录运行：
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm run test:ci
-pnpm run build
-pnpm run test:package
-npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.9.tgz
+Get-FileHash ./dsh-volcengine-provider-0.1.0-alpha.10.tgz -Algorithm SHA256
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.10.tgz
 dsh --profile web --dump-config
+```
+
+将包的 SHA-256 与 Release 附件 `SHA256SUMS` 比较。安装后按您日常使用的同一 CLI 来源和 profile 启动。
+
+源码开发才需要：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test:ci
+pnpm build
+node scripts/verify-package.mjs --output-dir release-artifacts
 ```
 
 真实联调只使用 Harness 已配置的凭据。不要读取、复制或输出 API Key；GitHub Actions 密钥也不会随源码下发到电脑。
@@ -48,11 +57,11 @@ dsh --profile web --dump-config
 必须把插件生命周期与外层程序生命周期分开验证：
 
 1. 冷启动 `cmd.exe /d /c npx @deepseek-ai/dsh web`，核对唯一进程树、loopback 监听、HTTP 标题与实际 PID 来源。
-2. 检查三张供应商卡、密码型 API Key UI、模型卡、四种模态三态选择，以及彩色 `+` 是否紧邻原附件入口。
+2. 检查三张供应商卡的可见名称、地址与状态，模型摘要可展开编辑；在窄窗口与深浅主题中检查可读性。依次保存不同通道不应产生假冲突，保存后立即换页也应完成保存；真正同通道并发冲突应保留草稿。
 3. 发送纯文本，确认真实回复或结构化上游错误。
 4. 选择受控原始图片、音频、完整视频；在同一主输入写问题后发送。抽帧图片不能计作视频理解验收。
-5. 在媒体 chip 尚留在草稿时刷新页面，确认恢复；再完整关闭 Harness，确认旧 PID 和端口消失，重新从上述日常命令启动并确认 chip／引用恢复。
-6. 覆盖普通发送、忙时 queue 和 steer；三者都必须保持一个原生 UserMessage 和同一 message ID。
+5. 先输入至少 80 字正文，分两次点击加号分别添加文件，形成两个 chip；刷新后逐字检查正文与两个附件；再完整关闭 Harness，确认旧 PID 和端口消失，重新从上述日常命令启动并确认 chip／引用恢复。
+6. 检查中文输入法、Enter、Shift+Enter、取消，以及普通发送、忙时 queue 和 steer；三者都必须保持一个原生 UserMessage 和同一 message ID。
 7. 让方舟 API 对不支持或过大的用户媒体返回真实错误，确认插件不自动压缩、抽帧、切模型或改写模态。
 8. 模拟已接收消息后的本地媒体失效，确认文本继续、媒体省略并带 `[VOLCENGINE_MEDIA_OMITTED code=…]`，Agent 可在下一轮处理。
 9. 再执行第二次完整停止／冷启动，证明结果不是热加载或隐藏验证进程留下的假阳性。
@@ -62,5 +71,9 @@ dsh --profile web --dump-config
 交付报告至少记录：候选 commit、包名与 SHA-256、源码归档 SHA-256、Harness/Node 版本、启动命令与来源路径、安装 profile、关闭前后 PID/端口、冷启动次数、UI 控件、受控样本 SHA-256、真实模型与 HTTP/请求 ID 结果、失败边界和回退目录。报告不得包含密钥值。
 
 同机重启恢复依赖同一个 `DSH_HOME`。当前会话导出不保证携带插件持久媒体对象，不能把本机恢复推断成跨电脑迁移。队列 UI 也可能在消息被 Agent 领取前短暂显示内部 marker；这是当前宿主队列渲染扩展点的边界，不影响同一消息投递，但必须在报告中如实写明。
+
+本版发布证据和剩余边界见 [alpha.10 发布说明](releases/alpha.10.md) 与 Release 附件。包级冷启动和组件交互验证不等于完整桌面浏览器验收。
+
+出现问题时记录插件/Host/Node 版本、通道、模型 ID、操作步骤和错误 request ID，并隐藏密钥。如需回退，停止 Harness 后安装保留的旧 tarball 并恢复冷备份 profile，不删除历史媒体所在的原 `DSH_HOME`。
 
 详细设计见 [原生输入栏的方舟媒体旁路](step6-original-media-ui.md)，历史 API 媒体证据见 [Coding Plan 原始媒体实测](live-coding-plan-media-2026-09-05.md)。

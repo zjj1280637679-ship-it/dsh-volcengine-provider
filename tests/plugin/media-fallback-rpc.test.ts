@@ -406,6 +406,23 @@ describe('loopback media RPC v2 boundary', () => {
     expect(JSON.stringify(internal)).not.toContain('secret')
   })
 
+  it('reports both disposed staging protocols as cancelled without an external abort', async () => {
+    const { staging } = await fixture()
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
+    const signal = new AbortController().signal
+    await staging.dispose()
+    await nativeStaging.dispose()
+
+    await expect(handler('begin', beginRequest(1), signal)).resolves.toMatchObject({
+      ok: false, error: { code: 'cancelled' },
+    })
+    await expect(handler('native-begin', nativeBeginRequest(1), signal)).resolves.toMatchObject({
+      ok: false, error: { code: 'cancelled' },
+    })
+    expect(signal.aborted).toBe(false)
+  })
+
   it('reports local staging capacity exhaustion without exposing a filesystem path', async () => {
     const { store, staging } = await fixture()
     const { nativeStaging } = await nativeFixture()
@@ -569,7 +586,11 @@ describe('loopback native media RPC v3 boundary', () => {
     })
     await expect(handler('native-discard', {
       sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
-    }, signal)).resolves.toEqual({ ok: true, value: { discarded: true } })
+    }, signal)).resolves.toEqual({ ok: true, value: { discarded: false } })
+    await expect(handler('native-status', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toEqual({ ok: true, value: claimed })
+    await expect(nativeStaging.discardClaim('session-one', NATIVE_BUNDLE, 'message-one')).resolves.toBe(true)
     await expect(handler('native-status', {
       sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
     }, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })

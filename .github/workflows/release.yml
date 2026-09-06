@@ -1,0 +1,91 @@
+name: Release verified prerelease
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  package-and-live:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Retain the exact verified package
+        run: node scripts/verify-package.mjs --output-dir release
+      - name: Extract verified package for the live adapter
+        run: |
+          mkdir -p release/installed
+          tar -xzf release/dsh-volcengine-provider-*.tgz -C release/installed
+      - name: Verify installation with Harness 0.1.1-rc.2
+        run: |
+          mkdir -p "$RUNNER_TEMP/dsh-cli"
+          pnpm --dir "$RUNNER_TEMP/dsh-cli" add --ignore-scripts --save-exact @deepseek-ai/dsh@0.1.1-rc.2
+          node scripts/verify-cli-install.mjs "$RUNNER_TEMP/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js" release/dsh-volcengine-provider-*.tgz | tee release/cli-install-verification.txt
+      - name: Seven bounded requests from the release package
+        env:
+          ARK_CODING_PLAN_API_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY }}
+          DSH_RELEASE_PACKAGE_ROOT: ${{ github.workspace }}/release/installed/package
+          DSH_LIVE_REPORT: release/live-review-results.json
+        run: node scripts/live-release.mjs
+      - name: Create source archive and release evidence
+        run: node scripts/release-evidence.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verified-release
+          path: |
+            release/*.tgz
+            release/*.zip
+            release/*.json
+            release/*.md
+            release/*.txt
+            release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: package-and-live
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-release
+          path: release
+      - name: Publish the verified candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha)" = "$GITHUB_SHA"
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+          case "$version" in *-*) ;; *) echo 'This workflow publishes prereleases only.'; exit 1;; esac
+          cd release
+          sha256sum --check SHA256SUMS
+          gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "v$version" --notes-file RELEASE-NOTES.md *.tgz *.zip *.json *.txt RELEASE-NOTES.md SHA256SUMS

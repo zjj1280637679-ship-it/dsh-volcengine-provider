@@ -1,5 +1,7 @@
 # Step 3 — Production Chat Adapter
 
+> 历史阶段记录：下文的测试数量、待办和当时入口只描述该阶段。当前安装、配置保存、自动识别文件类型和原生媒体入口以 [README](../README.md)、[alpha.10 发布说明](releases/alpha.10.md) 与 [本机接手指南](local-handoff.md) 为准。
+
 第三步在独立的 `adapter-v0.1` 分支开发，并以 `bootstrap-v0.1` 为叠加基线。
 
 ## 目标

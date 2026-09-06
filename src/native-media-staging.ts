@@ -316,6 +316,7 @@ export class NativeMediaStaging {
   private readonly manifestRoot: string
   private readonly bundles = new Map<string, PendingBundle>()
   private readonly messages = new Map<string, Set<string>>()
+  private readonly retiring = new Set<PendingBundle>()
   private manifestReady: Promise<void> | undefined
   private recovery: Promise<void> | undefined
   private expiryTimer: ReturnType<typeof setInterval> | undefined
@@ -585,6 +586,7 @@ export class NativeMediaStaging {
 
   private async retire(entry: PendingBundle): Promise<void> {
     const previousPhase = entry.phase
+    this.retiring.add(entry)
     entry.phase = 'materializing'
     try {
       await this.deleteManifest(entry.bundleId)
@@ -593,6 +595,8 @@ export class NativeMediaStaging {
     } catch (cause) {
       entry.phase = previousPhase
       throw cause
+    } finally {
+      this.retiring.delete(entry)
     }
   }
 
@@ -937,8 +941,8 @@ export class NativeMediaStaging {
       const entries: PendingBundle[] = []
       for (const bundleId of bundleIds) {
         const entry = this.bundles.get(bundleId)
-        if (entry === undefined || entry.sessionId !== sessionId || (entry.phase !== 'armed'
-          && entry.phase !== 'materializing' && entry.phase !== 'materialized')) return undefined
+        if (entry === undefined || entry.sessionId !== sessionId || this.retiring.has(entry)
+          || (entry.phase !== 'armed' && entry.phase !== 'materializing' && entry.phase !== 'materialized')) return undefined
         if (entry.messageId !== undefined && entry.messageId !== messageId) throw new NativeMediaClaimError()
         entries.push(entry)
       }
@@ -1088,7 +1092,12 @@ export class NativeMediaStaging {
     }
   }
 
-  async discard(sessionId: string, bundleId: string, signal?: AbortSignal): Promise<boolean> {
+  private async discardOwned(
+    sessionId: string,
+    bundleId: string,
+    messageId: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const leave = this.enterOperation()
     try {
       const activeSignal = this.operationSignal(signal)
@@ -1097,13 +1106,19 @@ export class NativeMediaStaging {
       activeSignal.throwIfAborted()
       if (!validIdentity(sessionId, SESSION_ID_MAX_CHARS) || !isNativeMediaBundleId(bundleId)) return false
       const entry = this.bundles.get(bundleId)
-      if (entry === undefined || entry.sessionId !== sessionId || this.busy(entry)) return false
+      if (entry === undefined || entry.sessionId !== sessionId
+        || entry.messageId !== messageId || this.busy(entry)) return false
       await this.retire(entry)
       activeSignal.throwIfAborted()
       return true
     } finally {
       leave()
     }
+  }
+
+  /** Draft deletion cannot retire a bundle bound to an accepted message. */
+  async discard(sessionId: string, bundleId: string, signal?: AbortSignal): Promise<boolean> {
+    return this.discardOwned(sessionId, bundleId, undefined, signal)
   }
 
   async discardClaim(
@@ -1114,9 +1129,7 @@ export class NativeMediaStaging {
   ): Promise<boolean> {
     if (!validIdentity(sessionId, SESSION_ID_MAX_CHARS) || !isNativeMediaBundleId(bundleId)
       || !validIdentity(messageId, MESSAGE_ID_MAX_CHARS)) return false
-    return !this.messages.get(messageKey(sessionId, messageId))?.has(bundleId)
-      ? false
-      : this.discard(sessionId, bundleId, signal)
+    return this.discardOwned(sessionId, bundleId, messageId, signal)
   }
 
   async discardUnclaimed(sessionId: string, signal?: AbortSignal): Promise<boolean> {

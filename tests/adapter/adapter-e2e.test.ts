@@ -169,7 +169,7 @@ describe('step 3 VolcengineChatAdapter against Fake Ark', () => {
     })
 
     await expect(collect(adapter.stream(request('agent')))).rejects.toMatchObject({
-      code: 'STREAM_CLOSED',
+      code: 'TRANSPORT',
     })
   })
 

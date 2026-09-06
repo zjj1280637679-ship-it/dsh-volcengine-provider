@@ -1,4 +1,4 @@
-import { createElement as h, useRef, useSyncExternalStore } from 'react'
+import { createElement as h, useId, useRef, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
 import { ARK_CHAT_MEDIA_ACCEPT } from '../media-file-types.js'
@@ -30,10 +30,14 @@ const button: CSSProperties = {
 /** One compact picker beside Harness's resident plus; native composer owns the text and send action. */
 export function MediaPlus({ operations, session, input }: MediaPlusProps): ReactNode {
   const picker = useRef<HTMLInputElement>(null)
+  const statusId = useId()
   const uploadState = useSyncExternalStore(operations.state.subscribe, operations.state.getSnapshot)
   const disabled = session.removed || session.subagent !== null || input.phase !== 'plain'
-  const title = uploadState.uploads > 0 ? '方舟媒体正在上传' : '添加方舟媒体附件'
-  return h('span', { style: { display: 'inline-flex', alignItems: 'center' } },
+  const title = session.removed ? '此会话已移除'
+    : session.subagent !== null ? '请在主会话中添加方舟媒体附件'
+      : input.phase !== 'plain' ? '请先完成或取消当前输入操作'
+        : uploadState.uploads > 0 ? '方舟媒体正在上传，点击可继续添加' : '添加方舟媒体附件'
+  return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
     h('input', {
       ref: picker,
       type: 'file',
@@ -55,8 +59,12 @@ export function MediaPlus({ operations, session, input }: MediaPlusProps): React
       style: { ...button, ...(disabled ? { cursor: 'not-allowed', opacity: 0.45 } : {}),
         ...(uploadState.uploads > 0 ? { filter: 'saturate(0.75)' } : {}) },
       disabled,
-      'aria-label': title,
+      'aria-label': '添加方舟媒体附件',
+      'aria-describedby': uploadState.uploads > 0 ? statusId : undefined,
       title,
       onClick: () => picker.current?.click(),
-    }, '+'))
+    }, '+'),
+    h('span', { id: statusId, role: 'status', 'aria-live': 'polite',
+      style: { fontSize: '12px', lineHeight: 1.4, color: 'var(--dsw-alias-label-secondary, inherit)' } },
+    uploadState.uploads > 0 ? `正在上传 ${uploadState.uploads} 组附件…` : ''))
 }

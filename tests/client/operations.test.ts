@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createCardOperations,
   hasNamespacedRemote,
+  SettingsConflictError,
   type SettingsDescribeValue,
   type SettingsPathOpView,
 } from '../../src/client/operations.js'
@@ -46,9 +47,10 @@ describe('version-neutral card operations', () => {
       value: { ARK_KEY: { configured: true, writable: true, source: 'memory' } },
     }))
     const set = vi.fn(async () => ({ ok: true as const, value: {} }))
+    const unset = vi.fn(async () => ({ ok: true as const, value: {} }))
     ctx.provide('remote', {
       settings: { describe, mutate },
-      credentials: { describe: describeCredential, set },
+      credentials: { describe: describeCredential, set, unset },
     } as never)
     const operations = createCardOperations(ctx)
     const ops: SettingsPathOpView[] = [{ op: 'set', path: ['routes'], value: {} }]
@@ -58,10 +60,12 @@ describe('version-neutral card operations', () => {
     await expect(operations.describeCredential('ARK_KEY')).resolves.toMatchObject({ configured: true })
     await expect(operations.saveSettings('llm-volcengine', ops, 4)).resolves.toEqual(view)
     await operations.saveCredential('ARK_KEY', 'test-value')
+    await expect(operations.deleteCredential?.('PRIVATE_STAGING_REF')).resolves.toBe(true)
     expect(describe).toHaveBeenCalledWith()
     expect(describeCredential).toHaveBeenCalledWith(['ARK_KEY'])
     expect(mutate).toHaveBeenCalledWith('llm-volcengine', ops, 4)
     expect(set).toHaveBeenCalledWith('ARK_KEY', 'test-value')
+    expect(unset).toHaveBeenCalledWith('PRIVATE_STAGING_REF')
   })
 
   it('uses rc.2 connection.api payloads and response envelopes', async () => {
@@ -76,10 +80,11 @@ describe('version-neutral card operations', () => {
       } },
     }))
     const set = vi.fn(async () => ({ rpcId: 'credential-write', result: { ok: true as const, value: {} } }))
+    const unset = vi.fn(async () => ({ rpcId: 'credential-delete', result: { ok: true as const, value: {} } }))
     ctx.provide('remote', {} as never)
     ctx.provide('connection', { api: {
       settings: { describe, mutate },
-      credentials: { describe: describeCredential, set },
+      credentials: { describe: describeCredential, set, unset },
     } } as never)
     const operations = createCardOperations(ctx)
     const ops: SettingsPathOpView[] = [{ op: 'unset', path: ['routes', 'standard', 'name'] }]
@@ -89,10 +94,12 @@ describe('version-neutral card operations', () => {
     await expect(operations.describeCredential('ARK_KEY')).resolves.toMatchObject({ configured: false })
     await expect(operations.saveSettings('llm-volcengine', ops, 4)).resolves.toEqual(view)
     await operations.saveCredential('ARK_KEY', 'test-value')
+    await expect(operations.deleteCredential?.('PRIVATE_STAGING_REF')).resolves.toBe(true)
     expect(describe).toHaveBeenCalledWith({})
     expect(describeCredential).toHaveBeenCalledWith({ refs: ['ARK_KEY'] })
     expect(mutate).toHaveBeenCalledWith({ ns: 'llm-volcengine', ops, expectedRevision: 4 })
     expect(set).toHaveBeenCalledWith({ ref: 'ARK_KEY', value: 'test-value' })
+    expect(unset).toHaveBeenCalledWith({ ref: 'PRIVATE_STAGING_REF' })
   })
 
   it('accepts an additive response envelope on the namespaced transport', async () => {
@@ -159,6 +166,24 @@ describe('version-neutral card operations', () => {
     } } as never)
 
     await expect(createCardOperations(ctx).saveSettings('llm-volcengine', [], 1))
-      .rejects.toThrow('配置已在其他位置更新。请重新载入后再保存。')
+      .rejects.toBeInstanceOf(SettingsConflictError)
+  })
+
+  it('contains credential transport failures and reports unsupported cleanup without exposing the submitted value', async () => {
+    const ctx = context()
+    ctx.provide('remote', {
+      settings: {
+        describe: async () => ({ ok: true, value: description() }),
+        mutate: async () => ({ ok: true, value: description().namespaces[0] }),
+      },
+      credentials: {
+        describe: async () => ({ ok: true, value: {} }),
+        set: async (_ref: string, value: string) => { throw new Error(`transport echoed ${value}`) },
+      },
+    } as never)
+    const operations = createCardOperations(ctx)
+    await expect(operations.saveCredential('PRIVATE_STAGING_REF', 'fake-never-echo-key'))
+      .rejects.toThrow('密钥未保存，请保留当前页面并重试。')
+    await expect(operations.deleteCredential?.('PRIVATE_STAGING_REF')).resolves.toBe(false)
   })
 })

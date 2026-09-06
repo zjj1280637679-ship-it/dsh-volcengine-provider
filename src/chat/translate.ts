@@ -70,7 +70,9 @@ export function mapUsage(usage: WireUsage): TokenUsage | undefined {
 }
 
 function acceptIdentity(current: string | undefined, incoming: unknown): string | undefined {
-  return typeof incoming === 'string' && incoming.length > 0 ? incoming : current
+  if (typeof incoming !== 'string' || incoming.length === 0) return current
+  if (current !== undefined && current !== incoming) malformed('tool call identity changed within one index')
+  return incoming
 }
 
 function closeBlock(block: OpenBlock): ContentBlock {
@@ -103,7 +105,7 @@ function optionalString(value: unknown, field: string): void {
   }
 }
 
-function responseObject(value: unknown): Record<string, unknown> {
+function responseObject(value: unknown, source?: Pick<Response, 'status' | 'headers'>): Record<string, unknown> {
   const response = object(value, 'response')
   if (response.error !== undefined && response.error !== null) {
     const error = object(response.error, 'error')
@@ -115,7 +117,7 @@ function responseObject(value: unknown): Record<string, unknown> {
         malformed('provider error code must be a string or number')
       }
     }
-    throw providerResponseError(response as WireErrorBody)
+    throw providerResponseError(response as WireErrorBody, source)
   }
   if (!Array.isArray(response.choices)) malformed('choices must be an array')
   if (response.usage !== undefined && response.usage !== null) {
@@ -173,9 +175,25 @@ function contentFields(value: unknown, field: string, streaming: boolean): void 
   }
 }
 
+/** Only successful tool calls can become executable history; truncation stays with the host. */
+function validateCompletedTools(blocks: readonly ContentBlock[], reason: FinishReason): void {
+  if (reason.kind !== 'stop' && reason.kind !== 'tool-calls') return
+  const calls = blocks.filter(block => block.type === 'tool-call')
+  if (reason.kind === 'tool-calls' && calls.length === 0) malformed('tool_calls finish has no tool calls')
+  const ids = new Set<string>()
+  for (const call of calls) {
+    if (call.id.trim().length === 0 || call.name.trim().length === 0) {
+      malformed('completed tool call must have a non-empty id and name')
+    }
+    if (ids.has(call.id)) malformed('completed tool call ids must be distinct')
+    ids.add(call.id)
+  }
+}
+
 /** Stateful OpenAI-compatible streaming translator. */
 export async function* translateSsePayloads(
   payloads: AsyncIterable<string>,
+  source?: Pick<Response, 'status' | 'headers'>,
 ): AsyncGenerator<StreamChunk> {
   let nextIndex = 0
   let textBlock: OpenBlock | undefined
@@ -196,8 +214,10 @@ export async function* translateSsePayloads(
       if (pendingFinish === undefined) {
         malformed('stream ended without finish_reason for choice 0')
       }
-      for (const block of order) {
-        yield { type: 'block-end', index: block.index, block: closeBlock(block) }
+      const blocks = order.map(closeBlock)
+      validateCompletedTools(blocks, pendingFinish)
+      for (const [index, block] of blocks.entries()) {
+        yield { type: 'block-end', index: order[index]!.index, block }
       }
       if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage }
       const reason = pendingFinish
@@ -226,7 +246,7 @@ export async function* translateSsePayloads(
       )
     }
 
-    const chunk = responseObject(value)
+    const chunk = responseObject(value, source)
     const selected = firstChoice(chunk)
     if (selected !== undefined) {
       if (selected.delta !== undefined && selected.delta !== null) {
@@ -286,7 +306,7 @@ export async function* translateSsePayloads(
     }
   }
 
-  throw new LlmError('SSE payload source ended without [DONE].', 'STREAM_CLOSED')
+  throw new LlmError('SSE payload source ended without [DONE].', 'TRANSPORT')
 }
 
 function completionBlocks(message: WireCompletionMessage): ContentBlock[] {
@@ -311,14 +331,17 @@ function completionBlocks(message: WireCompletionMessage): ContentBlock[] {
 /** Translate a non-streaming Chat completion into the same Harness chunk protocol. */
 export async function* translateCompletion(
   completion: unknown,
+  source?: Pick<Response, 'status' | 'headers'>,
 ): AsyncGenerator<StreamChunk> {
-  const response = responseObject(completion)
+  const response = responseObject(completion, source)
   const selected = firstChoice(response)
   if (selected === undefined) malformed('response has no choice 0')
   contentFields(selected.message, 'message', false)
   const choice = selected as WireCompletionChoice
   if (typeof choice.finish_reason !== 'string') malformed('response has no finish_reason for choice 0')
   const blocks = completionBlocks(choice.message!)
+  const reason = mapFinishReason(choice.finish_reason)
+  validateCompletedTools(blocks, reason)
   let index = 0
   for (const block of blocks) {
     yield { type: 'block-start', index, blockType: block.type }
@@ -342,7 +365,6 @@ export async function* translateCompletion(
     if (usage !== undefined) yield { type: 'usage', usage }
   }
 
-  const reason = mapFinishReason(choice.finish_reason)
   yield {
     type: 'finish',
     reason: reason.kind === 'stop' && blocks.length === 0

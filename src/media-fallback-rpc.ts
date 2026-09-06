@@ -712,7 +712,7 @@ export function createMediaFallbackRpcHandler(
       if (error instanceof MediaFallbackResourceError || error instanceof OriginalMediaStoreCapacityError) {
         return resourceExhausted(error.message)
       }
-      if (error instanceof NativeMediaLifecycleError) return cancelled()
+      if (error instanceof MediaFallbackLifecycleError || error instanceof NativeMediaLifecycleError) return cancelled()
       return { ok: false, error: {
         code: 'internal', message: 'The original-media request could not be completed.', details: {},
       } }
