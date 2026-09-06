@@ -8,6 +8,13 @@ import {
 import {
   arkChatMediaFileSpec,
 } from '../media-file-types.js'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type { IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {
+  InputTriggerServiceContract,
+  InputTriggerSource,
+  ReferenceInsert,
+} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import {
   formatNativeMediaMarker,
   nativeMediaMarkerIds,
@@ -22,14 +29,6 @@ import type {
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } }
 
-interface ReferenceInsert {
-  readonly source: string
-  readonly ref: string
-  readonly label: string
-  readonly appearance?: 'session' | 'file' | 'folder'
-  readonly clipboardText: string
-}
-
 interface InputState {
   readonly draft: string
   readonly draftRev: number
@@ -42,22 +41,22 @@ interface InputState {
   }[]
 }
 
-interface SessionInput {
-  setDraft(text: string): void
-  insertReference(reference: ReferenceInsert, span: {
-    readonly start: number
-    readonly end: number
-    readonly draftRev: number
-  }): boolean
-  notify(level: 'info' | 'error', text: string): void
+type PublicSessionInput = ReturnType<IConversation['input']['for']>
+
+// The two supported Harness lines publish the same SessionInput verbs through
+// IConversation, while their complete InputState currencies contain different
+// extra fields. Keep only the snapshot fields this bridge reads.
+type SessionInput = Pick<PublicSessionInput, 'setDraft' | 'insertReference' | 'notify'> & {
   readonly state: ReadableStore<InputState>
 }
 
-interface InputTriggerSource {
-  readonly trigger: '/'
-  readonly name: string
-  readonly order: number
-  readonly showGroupTitle: false
+// Candidate and pick request details changed between the supported releases.
+// Identity, reference serialization and enter adjudication are the stable
+// public surface this non-menu source actually implements.
+type NativeMediaInputTriggerSource = Pick<
+  InputTriggerSource,
+  'trigger' | 'name' | 'order' | 'showGroupTitle'
+> & {
   candidates(session: { readonly sessionId: string }, request: { readonly signal: AbortSignal }): Promise<readonly never[]>
   onPick(): undefined
   matchEnter(
@@ -76,8 +75,7 @@ interface InputTriggerSource {
 }
 
 export interface NativeMediaClientServices {
-  readonly connection: {
-    readonly isLoopback: boolean
+  readonly connection: Pick<ConnectionHandle, 'isLoopback'> & {
     readonly rpc: {
       call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<Result<unknown>>
     }
@@ -93,10 +91,12 @@ export interface NativeMediaClientServices {
     subagentAddress(sessionId: string): unknown
   }
   readonly conversation: {
-    readonly input: { for(scope: unknown): SessionInput }
+    readonly input: {
+      for(scope: Parameters<IConversation['input']['for']>[0]): SessionInput
+    }
   }
   readonly inputTriggers: {
-    registerSource(source: InputTriggerSource): () => void
+    registerSource(source: NativeMediaInputTriggerSource): ReturnType<InputTriggerServiceContract['registerSource']>
   }
   readonly generation: ReadableStore<number>
 }
@@ -272,7 +272,7 @@ export class NativeMediaDraftBridge {
   private sourceOff: (() => void) | undefined
   private disposed = false
 
-  readonly source: InputTriggerSource = {
+  readonly source: NativeMediaInputTriggerSource = {
     trigger: '/',
     name: NATIVE_MEDIA_REFERENCE_SOURCE,
     order: 1_000,
@@ -346,7 +346,9 @@ export class NativeMediaDraftBridge {
     if (scope === undefined || this.services.sessions.subagentAddress(sessionId) !== undefined) {
       throw new Error('Ark media attachments are available only in a local top-level Harness session.')
     }
-    return this.services.conversation.input.for(scope)
+    // Session scope types moved packages between 0.1.1 and 0.1.2. The runtime
+    // guard above is the stable public contract; this is the sole type seam.
+    return this.services.conversation.input.for(scope as Parameters<IConversation['input']['for']>[0])
   }
 
   private async selection(sessionId: string, signal?: AbortSignal): Promise<MediaSelection> {

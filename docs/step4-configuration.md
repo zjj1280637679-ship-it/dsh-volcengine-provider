@@ -35,7 +35,7 @@
 pnpm install --frozen-lockfile
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.8.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.9.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```

@@ -1,6 +1,6 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.8` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
@@ -43,7 +43,7 @@ pnpm run typecheck
 pnpm test
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.8.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.9.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -60,25 +60,27 @@ dsh --profile web
 - Cordis 插件注册供应商目录、模型目录、设置 namespace 和凭据引用；保存配置与轮换密钥作用于后续请求。
 - Web 卡片在新版宿主使用官方 Models slot 与 namespaced Remotes，在 `0.1.1-rc.2` 使用稳定的 Plugins slot 与 `connection.api`；两条路径共用同一表单，支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
 - 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
-- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 还曾在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成隔离实例验证；那是 [alpha.7 前的历史记录](docs/harness-web-loop-2026-09-06.md)，不能替代当前 `alpha.8` 的唯一实例与冷重启验收。
+- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 还曾在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成隔离实例验证；那是 [alpha.7 前的历史记录](docs/harness-web-loop-2026-09-06.md)，不能替代当前 `alpha.9` 的唯一实例与冷重启验收。
 - 历史真实媒体测试中，flash 图片与原始 MP4 的输出通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。发送侧的媒体字节均保持一致，但这只能证明 raw MP4 到 API 的链路与时序输出，不能证明供应商内部未抽帧或等同于 Seed 的原生视频处理，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
 
-`alpha.8` 把媒体入口收敛为 Harness 原生输入栏中、原有附件按钮旁边的一个彩色 `+`。它没有独立问题框、MIME 框或发送按钮：用户一次可选择多个方舟 Chat 支持的原图、原视频或原音频，附件显示为原生引用 chip，问题仍写在 Harness 主输入框，并由原生发送键、Enter、排队或插话路径提交。插件借用 Harness 的 `conversation.input.left`、输入引用 codec 和原生 `Session.prompt` 接口，因此文本与媒体只形成一条用户消息，而不是两套会话。
+`alpha.9` 把媒体入口收敛为 Harness 原生输入栏中、原有附件按钮旁边的一个彩色 `+`。它没有独立问题框、MIME 框或发送按钮：用户一次可选择多个方舟 Chat 支持的原图、原视频或原音频，附件显示为原生引用 chip，问题仍写在 Harness 主输入框，并由原生发送键、Enter、排队或插话路径提交。插件借用 Harness 的 `conversation.input.left`、输入引用 codec 和原生 `Session.prompt` 接口，因此文本与媒体只形成一条用户消息，而不是两套会话。
 
 文件类型由扩展名和浏览器声明共同核验，不由用户手填；两者冲突会在本机拒绝，未知能力仍交给模型和 API 裁决。当前 Chat 路径接收方舟文档列出的图片、MP4／AVI／MOV，以及 MP3／WAV／AAC／M4A；PDF 属于 Responses／Files 路径，本适配器不会伪装成 Chat 支持。模态保持未设置即可尝试，只有模型卡中被用户明确强制关闭的模态才会阻断。
 
 彩色 `+` 仅是输入旁路：浏览器把用户主动选择的文件按服务端公布的块大小原样写入插件专属、loopback-only 的持久暂存区；不接收本机路径，也不扫描桌面。暂存引用精确绑定 session、provider 和 model，选择变化即拒绝提交。Harness 用自己的引用持久化格式保存草稿，插件在页面刷新或整个 Harness 重启后重新解析并恢复 chip。旧 `/ark-media` 与 MP4 token 接口仅作为已有会话／调用方的内部兼容层保留，不再构成另一套用户界面。
 
+删除 chip 会取消仍在进行的传输并退役 bundle/manifest，但内容寻址对象是会话附件的耐久存储，不能在没有历史引用账本时按单个 bundle 草率删除：同一 SHA-256 对象可能已被其他持久化消息复用。当前版本优先保证历史与重启可读；被放弃且未被任何消息采用的唯一内容对象尚无自动安全 GC，维护时必须先建立或核对引用索引。
+
 用户主动选择的文件没有插件定义的总文件大小上限，也不受“智能体媒体续链预算”影响。安全整数、Node 可表示范围、实时磁盘容量及 V8／系统内存不足属于必须显式报告的物理边界；其余请求体、模型和服务限制交给方舟 API 返回真实错误。带媒体的请求在进程内逐个完成完整原字节读取、Base64／JSON 编码及 HTTP 请求体提交，排队可取消，纯文本不受媒体编码闸门影响。这不是任意大小必然可发的承诺，也不会把文档示例值偷换成插件硬限制。
 
-原图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。媒体在消息进入模型前若因本机引用损坏等原因失效，插件保留该条用户文本并添加机器可读诊断，省略失效媒体，使 Agent 下一轮可以自行处理而不把会话链路卡死；用户直接提交后收到的真实方舟拒绝则原样可见，不自动改模型、压缩、重试或抽帧。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md) 与 [第五步媒体输入](docs/step5-media-input.md)。
+原图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。媒体引用进入 Harness 后若在 bundle 物化阶段失效，插件保留该条用户文本并添加机器可读诊断；已通过续链预算的 Agent `tool-result` 图片／视频若单块读取、完整性校验或编码失败，也只省略该块并退还预算。取消、显式模态禁用以及请求级 Node 可表示性／实时内存不足仍明确中止，不伪装成成功。用户直接提交后收到的真实方舟拒绝则原样可见，不自动改模型、压缩、重试或抽帧。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md) 与 [第五步媒体输入](docs/step5-media-input.md)。
 
 官方 `ark-plan-api` 与本插件使用不同的配置行和 Provider ID，技术上可共存，但会出现含义相近、凭据与协议路径不同的方舟卡片。验收或长期使用时建议在隔离 profile 中明确选择一种，尤其不要把 Coding Plan 密钥误发到普通 `/api/v3` 通道。
 
 当前历史界面将专用媒体块显示为 JSON；会话导出不会自动携带这些块的媒体字节，同机共用原 `DSH_HOME` 可继续读取，但导出包尚不能保证移机完整重放。
 
-宿主兼容按公共能力判断，不按 `@deepseek-ai/dsh-*` 的预发布版本号判断。这些模块由 Harness 安装的依赖闭包提供，发布包不会把某一周的宿主组件写成 peer 版本锁，也不会私带一份旧宿主实现；`devDependencies` 中的精确版本只用于可复现编译和测试。当前适配器核心、模型目录、模型发现、设置挂载、UI 插槽和媒体入口分别探测：可选能力缺失时只停用对应界面或入口，核心 LLM 接口缺失时插件显式告警并保持宿主可启动。此策略覆盖经过验证的同一公共接口族，不承诺未知破坏性版本或未来 major 自动兼容。
+宿主兼容按公共能力判断，不按 `@deepseek-ai/dsh-*` 的预发布版本号判断。这些模块由 Harness 安装的依赖闭包提供，发布包不会把某一周的宿主组件写成 peer 版本锁，也不会私带一份旧宿主实现；`devDependencies` 中的精确版本只用于可复现编译和测试。当前适配器核心、模型目录、模型发现、设置挂载、UI 插槽和媒体入口分别探测：可选能力缺失时只停用对应界面或入口，核心 LLM 接口缺失时插件显式告警并保持宿主可启动。媒体上传代次优先订阅新版公开的 `connection.generation`，并兼容旧版公开的 `connection.hostDescription`；两者都不存在就不挂载入口，避免重连后误用旧上传。ABI 门禁同时检查这些 client 类型与方法结构。此策略覆盖经过验证的同一公共接口族，不承诺未知破坏性版本或未来 major 自动兼容。
 
-源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.8` 额外兼容 Harness `0.1.1-rc.2`：Models 页保留宿主的通用供应商行，已配置通道的高级方舟卡片改在 Plugins 页挂载；供应商注册、热配置、凭据状态、文本以及彩色 `+` 原始多媒体旁路均按公共能力挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
+源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.9` 额外兼容 Harness `0.1.1-rc.2`：Models 页保留宿主的通用供应商行，已配置通道的高级方舟卡片改在 Plugins 页挂载；供应商注册、热配置、凭据状态、文本以及彩色 `+` 原始多媒体旁路均按公共能力挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
 
 设计资料：[第一阶段基本闭环](docs/phase1-basic-loop-2026-09-05.md) · [自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md) · [第五步媒体输入](docs/step5-media-input.md) · [历史隔离闭环](docs/harness-web-loop-2026-09-06.md)

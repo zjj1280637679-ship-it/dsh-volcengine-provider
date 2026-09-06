@@ -112,7 +112,14 @@ it('adds one input-row media plus only when the complete public side-path exists
     const mediaEntries = () => ctx.slots.entries('conversation.input.left' as never)
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
     expect(mediaEntries()).toHaveLength(0)
-    ctx.provide('connection', { isLoopback: true, rpc: { call() {} } })
+    ctx.provide('connection', {
+      isLoopback: true,
+      rpc: { call() {} },
+      generation: {
+        getSnapshot: () => ({ id: 1, host: { home: 'C:\\Users\\fixture' } }),
+        subscribe: () => () => {},
+      },
+    })
     ctx.provide('modelDirectories', { directoryFor: () => ({
       store: { getSnapshot: () => ({ current: null, routable: null }), subscribe: () => () => {} },
       load: async () => {},

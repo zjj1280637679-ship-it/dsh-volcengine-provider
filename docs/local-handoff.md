@@ -1,4 +1,4 @@
-# 本机接手：alpha.8 火山方舟插件
+# 本机接手：alpha.9 火山方舟插件
 
 目标是：配置方舟供应商 → 选模型 → 用主输入框旁的彩色 `+` 添加原始媒体 → 与文本作为同一消息发送 → 收到回复或真实错误 → 完整关闭并重启同一个 Harness 后继续使用。
 
@@ -16,7 +16,7 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 3080,3081 | Sele
 
 ## 2. 构建与安装
 
-完整代码在本地 `codex/local-loop-20260906` 分支。`0.1.0-alpha.8` 是未发布的本地包，不要把默认分支或旧 alpha 报告当成本次候选。
+完整代码在本地 `codex/local-loop-20260906` 分支。`0.1.0-alpha.9` 是未发布的本地包，不要把默认分支或旧 alpha 报告当成本次候选。
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -25,7 +25,7 @@ pnpm run test:ci
 pnpm run build
 pnpm run test:package
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.8.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.9.tgz
 dsh --profile web --dump-config
 ```
 

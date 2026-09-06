@@ -5,11 +5,11 @@ import { getHeapStatistics } from 'node:v8'
 import { LlmError } from '@deepseek-ai/dsh-llm'
 
 export interface MediaRequestFootprint {
-  /** Number of attachment-backed blocks that will reach the generated body. */
+  /** Conservative count of attachment-backed blocks that may reach the generated body. */
   readonly mediaCount: number
-  /** Sum of the attachment providers' declared raw byte lengths. */
+  /** Conservative upper bound for their declared raw byte lengths. */
   readonly declaredBytes: number
-  /** Sum of the corresponding canonical base64 character counts. */
+  /** Conservative upper bound for the corresponding canonical base64 characters. */
   readonly base64Bytes: number
 }
 

@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 
 import { hasMethods, hasSlotRegistry } from '../host-compat.js'
 import { MediaPlus } from './MediaPlus.js'
@@ -11,6 +12,73 @@ function hasLoopbackConnection(value: unknown): value is NativeMediaClientServic
   if (typeof value !== 'object' || value === null) return false
   const candidate = value as { isLoopback?: unknown; rpc?: unknown }
   return candidate.isLoopback === true && hasMethods(candidate.rpc, ['call'])
+}
+
+interface PublicConnectionLifecycleSource {
+  getSnapshot(): unknown
+  subscribe(listener: () => void): () => void
+}
+
+export type ConnectionGenerationClock = NativeMediaClientServices['generation'] & {
+  /** Public Host capability selected for this Harness generation. */
+  readonly source: 'generation' | 'hostDescription'
+  dispose(): void
+}
+
+function hasLifecycleSource(value: unknown): value is PublicConnectionLifecycleSource {
+  return hasMethods(value, ['getSnapshot', 'subscribe'])
+}
+
+/**
+ * Convert both published Connection lifecycles into one monotone upload clock.
+ * 0.1.2 exposes `generation`; 0.1.1 exposes `hostDescription`. A source
+ * notification means establishment, loss, or replacement and invalidates all
+ * work admitted under the preceding clock value.
+ */
+export function createConnectionGenerationClock(connection: unknown): ConnectionGenerationClock | undefined {
+  if (typeof connection !== 'object' || connection === null) return undefined
+  // This structural union is intentional: no single ConnectionHandle release
+  // declares both names, but both are public observable stores in their line.
+  const candidate = connection as Pick<ConnectionHandle, 'isLoopback' | 'rpc'> & {
+    readonly generation?: unknown
+    readonly hostDescription?: unknown
+  }
+  const selected = hasLifecycleSource(candidate.generation)
+    ? { source: 'generation' as const, store: candidate.generation }
+    : hasLifecycleSource(candidate.hostDescription)
+      ? { source: 'hostDescription' as const, store: candidate.hostDescription }
+      : undefined
+  if (selected === undefined) return undefined
+
+  let value = 0
+  const listeners = new Set<() => void>()
+  let stop: (() => void) | undefined
+  try {
+    selected.store.getSnapshot()
+    stop = selected.store.subscribe(() => {
+      value += 1
+      for (const listener of [...listeners]) listener()
+    })
+  } catch {
+    return undefined
+  }
+  if (typeof stop !== 'function') return undefined
+  let disposed = false
+  return {
+    source: selected.source,
+    getSnapshot: () => value,
+    subscribe: listener => {
+      if (disposed) return () => {}
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      listeners.clear()
+      stop()
+    },
+  }
 }
 
 function hasDirectories(value: unknown): value is NativeMediaClientServices['directories'] {
@@ -47,24 +115,21 @@ export function registerMediaPlus(ctx: Context): void {
     const slots = scope.get('slots')
     if (!hasSlotRegistry(slots)) return
 
-    let generation = 0
-    const generationListeners = new Set<() => void>()
-    const generationStore: NativeMediaClientServices['generation'] = {
-      getSnapshot: () => generation,
-      subscribe: listener => {
-        generationListeners.add(listener)
-        return () => { generationListeners.delete(listener) }
-      },
+    const generationStore = createConnectionGenerationClock(connection)
+    if (generationStore === undefined) {
+      scope.logger.warn('dsh-volcengine-provider: native media plus disabled because Connection publishes no supported lifecycle state source')
+      return
     }
-    scope.on('connection/reset' as never, (() => {
-      generation += 1
-      for (const listener of [...generationListeners]) listener()
-    }) as never)
 
     const bridge = new NativeMediaDraftBridge({
       connection, directories, sessions, conversation, inputTriggers, generation: generationStore,
     })
-    scope.effect(() => bridge.register())
+    scope.effect(() => {
+      const stopBridge = bridge.register()
+      return () => {
+        try { stopBridge() } finally { generationStore.dispose() }
+      }
+    })
     const mediaSlots = slots as unknown as {
       inject(name: string, register: () => () => void): void
       register(options: {

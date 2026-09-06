@@ -3,7 +3,12 @@ import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-ll
 
 import { createDefaultModelConfig } from '../../src/domain.js'
 import { decodeVerbatimBase64, parseVerbatimDataUrl, sha256Hex } from '../../src/media.js'
-import { serializeChatRequest } from '../../src/chat/serialize.js'
+import {
+  defaultEncodeMediaPart,
+  inspectChatMediaFootprint,
+  serializeChatRequest,
+  type MediaInputBlock,
+} from '../../src/chat/serialize.js'
 
 type LooseMessage = Omit<Message, 'id' | 'source'> & { id: string; source: { kind: 'user' } }
 
@@ -197,12 +202,96 @@ describe('step 3 serializer', () => {
       .toEqual(['text', 'image_url', 'image_url'])
   })
 
+  it('omits only failed budgeted tool media, preserves usable parts, and never exposes local paths', async () => {
+    const config = createDefaultModelConfig()
+    config.agentMediaFallbackMB = 0.000004 // four bytes, using decimal MB
+    const privatePath = String.raw`C:\Users\private-user\Desktop\missing.png`
+    const byId = new Map([
+      ['mismatched-video', Uint8Array.of(4, 5)],
+      ['encode-failure', Uint8Array.of(6, 7, 8)],
+      ['usable-image', Uint8Array.of(9, 8, 7, 6)],
+    ])
+    const toolContent: ContentBlock[] = [
+      { type: 'text', text: 'tool text survives' },
+      { type: 'volcengine-image', attachment: attachment('missing-image', 3), mediaType: 'image/png' },
+      { type: 'volcengine-video', attachment: attachment('mismatched-video', 3), mediaType: 'video/mp4' },
+      { type: 'volcengine-image', attachment: attachment('encode-failure', 3), mediaType: 'image/png' },
+      { type: 'volcengine-image', attachment: attachment('usable-image', 4), mediaType: 'image/png' },
+    ]
+    const resolveMediaBytes = vi.fn(async (block: MediaInputBlock) => {
+      const id = String(block.attachment.attachmentId)
+      if (id === 'missing-image') throw new Error(`ENOENT: ${privatePath}`)
+      return byId.get(id)!
+    })
+    const requestOptions = options([toolResult('call-partial', toolContent)])
+    expect(inspectChatMediaFootprint(requestOptions, { modelConfig: config })).toEqual({
+      mediaCount: 4,
+      declaredBytes: 4,
+      base64Bytes: 16,
+    })
+    const body = await serializeChatRequest(requestOptions, {
+      modelConfig: config,
+      resolveMediaBytes,
+      encodeMediaPart: (block, dataUrl) => {
+        if (block.attachment.attachmentId === 'encode-failure') {
+          throw new Error(`cannot encode ${privatePath}`)
+        }
+        return defaultEncodeMediaPart(block, dataUrl)
+      },
+    })
+
+    expect(resolveMediaBytes).toHaveBeenCalledTimes(4)
+    const messages = body.messages as Array<{ role: string; content: unknown; tool_call_id?: string }>
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({
+      role: 'tool', tool_call_id: 'call-partial', content: expect.stringMatching(/^tool text survives\n/u),
+    })
+    const toolText = String(messages[0]!.content)
+    expect(toolText.match(/code=TOOL_MEDIA_PROCESSING_FAILED/gu)).toHaveLength(3)
+    expect(toolText).not.toContain('TOOL_MEDIA_BUDGET_EXCEEDED')
+    expect(toolText).toContain('stage=resolve_integrity_or_encode')
+    expect(toolText).not.toContain(privatePath)
+    expect(toolText).not.toContain('missing-image')
+    expect(toolText).not.toContain('mismatched-video')
+    expect(toolText).not.toContain('encode-failure')
+    expect(messages[1]!.role).toBe('user')
+    expect(messages[1]!.content).toEqual([
+      { type: 'text', text: 'Attached media from tool result:' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,CQgHBg==' } },
+    ])
+  })
+
+  it('propagates cancellation instead of turning it into a tool-media fallback', async () => {
+    const abortFailure = Object.assign(new Error('cancelled while reading private media'), { name: 'AbortError' })
+    await expect(serializeChatRequest(options([toolResult('call-aborted', [
+      { type: 'text', text: 'must not be sent after cancellation' },
+      { type: 'volcengine-image', attachment: attachment('cancelled-image', 1), mediaType: 'image/png' },
+    ])]), {
+      resolveMediaBytes: async () => { throw abortFailure },
+    })).rejects.toBe(abortFailure)
+  })
+
+  it('keeps direct user media strict for resolver and byte-integrity failures', async () => {
+    const resolverFailure = new Error(String.raw`ENOENT: C:\Users\private-user\direct.png`)
+    await expect(serializeChatRequest(options([user([{
+      type: 'volcengine-image', attachment: attachment('direct-missing', 1), mediaType: 'image/png',
+    }])]), {
+      resolveMediaBytes: async () => { throw resolverFailure },
+    })).rejects.toBe(resolverFailure)
+
+    await expect(serializeChatRequest(options([user([{
+      type: 'volcengine-video', attachment: attachment('direct-mismatch', 2), mediaType: 'video/mp4',
+    }])]), {
+      resolveMediaBytes: async () => Uint8Array.of(1),
+    })).rejects.toMatchObject({ code: 'MEDIA_INTEGRITY_FAILED' })
+  })
+
   it('treats zero as disabled and never applies the tool fallback to direct user media', async () => {
     const config = createDefaultModelConfig()
     config.agentMediaFallbackMB = 0
-    const resolveDisabled = vi.fn(async () => Uint8Array.of(9))
+    const resolveDisabled = vi.fn(async () => Uint8Array.of(9, 10))
     const disabledBody = await serializeChatRequest(options([toolResult('call-disabled', [{
-      type: 'volcengine-video', attachment: attachment('unlimited-tool-video', 900_000_000), mediaType: 'video/mp4',
+      type: 'volcengine-video', attachment: attachment('unlimited-tool-video', 2), mediaType: 'video/mp4',
     }])]), { modelConfig: config, resolveMediaBytes: resolveDisabled })
     expect(resolveDisabled).toHaveBeenCalledOnce()
     expect((disabledBody.messages as Array<{ role: string }>).map(message => message.role)).toEqual(['tool', 'user'])
@@ -210,12 +299,17 @@ describe('step 3 serializer', () => {
 
     const tiny = createDefaultModelConfig()
     tiny.agentMediaFallbackMB = 0.000001
-    const resolveUser = vi.fn(async () => Uint8Array.of(8))
+    const directFootprint = inspectChatMediaFootprint(options([user([{
+      type: 'volcengine-video', attachment: attachment('large-direct-declaration', 900_000_000), mediaType: 'video/mp4',
+    }])]), { modelConfig: tiny })
+    expect(directFootprint).toMatchObject({ mediaCount: 1, declaredBytes: 900_000_000 })
+
+    const resolveUser = vi.fn(async () => Uint8Array.of(8, 9))
     const directBody = await serializeChatRequest(options([user([{
-      type: 'volcengine-video', attachment: attachment('direct-user-video', 900_000_000), mediaType: 'video/mp4',
+      type: 'volcengine-video', attachment: attachment('direct-user-video', 2), mediaType: 'video/mp4',
     }])]), { modelConfig: tiny, resolveMediaBytes: resolveUser })
     expect(resolveUser).toHaveBeenCalledOnce()
-    expect(JSON.stringify(directBody.messages)).toContain('data:video/mp4;base64,CA==')
+    expect(JSON.stringify(directBody.messages)).toContain('data:video/mp4;base64,CAk=')
     expect(JSON.stringify(directBody.messages)).not.toContain('VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR')
   })
 
@@ -226,7 +320,7 @@ describe('step 3 serializer', () => {
       ? Uint8Array.of(1, 2, 3)
       : Uint8Array.of(4))
     const body = await serializeChatRequest(options([toolResult('call-audio', [
-      { type: 'volcengine-audio', attachment: attachment('audio', 99_000_000), mediaType: 'audio/wav' },
+      { type: 'volcengine-audio', attachment: attachment('audio', 3), mediaType: 'audio/wav' },
       { type: 'volcengine-image', attachment: attachment('image', 1), mediaType: 'image/png' },
     ])]), { modelConfig: config, resolveMediaBytes })
     expect(resolveMediaBytes).toHaveBeenCalledTimes(2)

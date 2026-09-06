@@ -65,6 +65,13 @@ interface ToolMediaContext {
   readonly diagnostics: string[]
 }
 
+interface ToolMediaFootprintCandidates {
+  readonly limitBytes: number
+  mediaCount: number
+  declaredBytes: bigint
+  base64Bytes: bigint
+}
+
 const DECIMAL_MB_BYTES = 1_000_000
 
 function createAgentMediaBudget(config: ModelConfig): AgentMediaBudget | undefined {
@@ -95,6 +102,23 @@ function omittedToolMediaDiagnostic(
     return undefined
   }
   return `[VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR code=TOOL_MEDIA_BUDGET_EXCEEDED media=${media} declared_bytes=${declaredBytes} used_bytes=${budget.usedBytes} budget_bytes=${budget.limitBytes} action=omitted_from_this_request source_file_deleted=false automatic_retry=false next=choose_strategy]`
+}
+
+function failedToolMediaDiagnostic(block: BudgetedToolMediaBlock): string {
+  const media = block.type === 'volcengine-video' ? 'video' : 'image'
+  // Never include the attachment id, filename or resolver error here: all can
+  // contain a local path. The stable code tells the agent what happened while
+  // leaving the original failure private to the local media boundary.
+  return `[VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR code=TOOL_MEDIA_PROCESSING_FAILED media=${media} stage=resolve_integrity_or_encode action=omitted_from_this_request source_file_deleted=false automatic_retry=false next=choose_strategy]`
+}
+
+function isAbortFailure(cause: unknown): boolean {
+  if (typeof cause !== 'object' || cause === null) return false
+  try {
+    return Reflect.get(cause, 'name') === 'AbortError'
+  } catch {
+    return false
+  }
 }
 
 function blockType(block: ContentBlock): string {
@@ -162,7 +186,7 @@ function inspectContentMedia(
   blocks: readonly ContentBlock[],
   config: ModelConfig,
   footprint: MutableMediaFootprint,
-  toolMedia?: ToolMediaContext,
+  toolMedia?: ToolMediaFootprintCandidates,
 ): void {
   for (const block of blocks) {
     switch (block.type) {
@@ -173,9 +197,20 @@ function inspectContentMedia(
       case 'volcengine-image':
       case 'volcengine-video':
       case 'volcengine-audio':
-        if (toolMedia !== undefined && isBudgetedToolMedia(block) && toolMedia.budget !== undefined) {
-          const diagnostic = omittedToolMediaDiagnostic(block, toolMedia.budget)
-          if (diagnostic !== undefined) break
+        if (toolMedia !== undefined && isBudgetedToolMedia(block)) {
+          const declaredBytes = block.attachment.bytes
+          // Invalid declarations and an item larger than the entire budget are
+          // always omitted before resolution. Every other item could be the
+          // one that succeeds after earlier resolution failures, so account
+          // for all such candidates and cap their aggregate to a safe budget
+          // upper bound after walking the request.
+          if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0
+            || declaredBytes > toolMedia.limitBytes) break
+          const bytes = BigInt(declaredBytes)
+          toolMedia.mediaCount++
+          toolMedia.declaredBytes += bytes
+          toolMedia.base64Bytes += 4n * ((bytes + 2n) / 3n)
+          break
         }
         addMediaFootprint(block, config, footprint)
         break
@@ -191,6 +226,27 @@ function inspectContentMedia(
   }
 }
 
+function addToolMediaFootprintUpperBound(
+  candidates: ToolMediaFootprintCandidates | undefined,
+  footprint: MutableMediaFootprint,
+): void {
+  if (candidates === undefined || candidates.mediaCount === 0) return
+  const limit = BigInt(candidates.limitBytes)
+  footprint.mediaCount += candidates.mediaCount
+  footprint.declaredBytes += candidates.declaredBytes < limit ? candidates.declaredBytes : limit
+  // For every non-empty byte array, canonical base64 is at most four times
+  // its raw length. Also retain the tighter sum of all candidate encodings.
+  const encodedLimit = 4n * limit
+  footprint.base64Bytes += candidates.base64Bytes < encodedLimit
+    ? candidates.base64Bytes
+    : encodedLimit
+  if (!Number.isSafeInteger(footprint.mediaCount)
+    || footprint.declaredBytes > BigInt(Number.MAX_SAFE_INTEGER)
+    || footprint.base64Bytes > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new LlmError('The declared media request size is invalid.', 'INVALID_MEDIA_SIZE')
+  }
+}
+
 /** Inspect attachment declarations only; no bytes are read or transformed. */
 export function inspectChatMediaFootprint(
   options: GenerateOptions,
@@ -201,6 +257,9 @@ export function inspectChatMediaFootprint(
   }
   const config = serialization.modelConfig ?? createDefaultModelConfig()
   const budget = createAgentMediaBudget(config)
+  const toolCandidates: ToolMediaFootprintCandidates | undefined = budget === undefined
+    ? undefined
+    : { limitBytes: budget.limitBytes, mediaCount: 0, declaredBytes: 0n, base64Bytes: 0n }
   const footprint: MutableMediaFootprint = { mediaCount: 0, declaredBytes: 0n, base64Bytes: 0n }
   for (const message of options.messages) {
     if (message.role === 'system') continue
@@ -214,9 +273,10 @@ export function inspectChatMediaFootprint(
     )
     inspectContentMedia(regular, config, footprint)
     for (const result of toolResults) {
-      inspectContentMedia(result.content, config, footprint, { budget, diagnostics: [] })
+      inspectContentMedia(result.content, config, footprint, toolCandidates)
     }
   }
+  addToolMediaFootprintUpperBound(toolCandidates, footprint)
   return {
     mediaCount: footprint.mediaCount,
     declaredBytes: Number(footprint.declaredBytes),
@@ -281,15 +341,12 @@ function serializeAssistant(message: Message): WireAssistantMessage {
   }
 }
 
-async function encodeMedia(
+async function resolveAndEncodeMedia(
   block: MediaInputBlock,
-  config: ModelConfig,
   options: ChatSerializationOptions,
   signal?: AbortSignal,
 ): Promise<WireUserPart> {
   const modality = modalityOf(block)
-  assertModalityEnabled(config, modality)
-  declaredMediaBytes(block)
   if (options.resolveMediaBytes === undefined) {
     throw new LlmError(
       `${modality} input needs a media-byte resolver.`,
@@ -298,8 +355,25 @@ async function encodeMedia(
   }
   const bytes = await options.resolveMediaBytes(block, signal)
   signal?.throwIfAborted()
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength !== block.attachment.bytes) {
+    throw new LlmError(
+      'The resolved media bytes do not match the declared attachment length.',
+      'MEDIA_INTEGRITY_FAILED',
+    )
+  }
   const dataUrl = toVerbatimDataUrl(mediaTypeOf(block), bytes)
   return (options.encodeMediaPart ?? defaultEncodeMediaPart)(block, dataUrl)
+}
+
+async function encodeMedia(
+  block: MediaInputBlock,
+  config: ModelConfig,
+  options: ChatSerializationOptions,
+  signal?: AbortSignal,
+): Promise<WireUserPart> {
+  assertModalityEnabled(config, modalityOf(block))
+  declaredMediaBytes(block)
+  return resolveAndEncodeMedia(block, options, signal)
 }
 
 async function contentParts(
@@ -323,11 +397,28 @@ async function contentParts(
       case 'volcengine-video':
       case 'volcengine-audio':
         if (toolMedia !== undefined && isBudgetedToolMedia(block) && toolMedia.budget !== undefined) {
+          const usedBytesBefore = toolMedia.budget.usedBytes
           const diagnostic = omittedToolMediaDiagnostic(block, toolMedia.budget)
           if (diagnostic !== undefined) {
             toolMedia.diagnostics.push(diagnostic)
             break
           }
+          // Policy/declaration errors retain their normal strict behavior. Only
+          // failures after this tool-owned media has been admitted are local to
+          // that media part; text and other admitted parts remain usable.
+          assertModalityEnabled(config, modalityOf(block))
+          declaredMediaBytes(block)
+          try {
+            parts.push(await resolveAndEncodeMedia(block, options, signal))
+          } catch (cause) {
+            signal?.throwIfAborted()
+            if (isAbortFailure(cause)) throw cause
+            // A media part that never reaches the wire must not consume the
+            // request budget or crowd out a later usable tool result.
+            toolMedia.budget.usedBytes = usedBytesBefore
+            toolMedia.diagnostics.push(failedToolMediaDiagnostic(block))
+          }
+          break
         }
         parts.push(await encodeMedia(block, config, options, signal))
         break
