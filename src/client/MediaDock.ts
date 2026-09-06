@@ -13,6 +13,8 @@ const input: CSSProperties = { width: '100%', boxSizing: 'border-box', font: 'in
   color: 'inherit', background: 'var(--dsw-bg-primary, transparent)',
   border: '1px solid var(--dsw-border-primary, currentColor)', borderRadius: 6 }
 const button: CSSProperties = { font: 'inherit', padding: '6px 10px', cursor: 'pointer' }
+const addButton: CSSProperties = { ...button, width: 32, height: 32, padding: 0, borderRadius: '50%',
+  fontSize: 22, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', justifySelf: 'start' }
 
 /** A separate, optional media draft; the host composer and its attachment rail keep their own state. */
 export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
@@ -92,6 +94,7 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
   const update = (index: number, patch: Partial<MediaDraftFile>): void => {
     setFiles(current => current.map((value, item) => item === index ? { ...value, ...patch } : value))
   }
+  const addLabel = loopbackVideo ? '选择原始 MP4' : '添加原始媒体'
 
   return h('details', { open: true, style: { margin: '8px 0', fontSize: 13 }, 'aria-label': '火山方舟原始媒体' },
     h('summary', { style: { cursor: 'pointer' } }, '方舟原始媒体'),
@@ -115,8 +118,8 @@ export function MediaDock({ operations, session }: MediaDockProps): ReactNode {
           event.target.value = ''
           setNotice('')
         } }),
-      h('button', { type: 'button', style: button, disabled: busy || !ready, onClick: () => picker.current?.click() },
-        loopbackVideo ? '选择原始 MP4' : '添加原始媒体'),
+      h('button', { type: 'button', style: addButton, disabled: busy || !ready, 'aria-label': addLabel,
+        title: addLabel, onClick: () => picker.current?.click() }, '+'),
       ...files.map((item, index) => h('fieldset', { key: index, disabled: busy,
         style: { display: 'grid', gap: 8, minWidth: 0, margin: 0, border: '1px solid var(--dsw-border-primary, currentColor)', borderRadius: 6 } },
       h('legend', null, `${index + 1}. ${item.file.name}（${item.file.size} 字节）`),

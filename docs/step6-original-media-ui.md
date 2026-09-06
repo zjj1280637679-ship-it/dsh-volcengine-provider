@@ -2,7 +2,7 @@
 
 在会话输入区增加默认展开、仍可折叠的“方舟原始媒体”面板。新版宿主将图片、音频、视频原 `File` 交给官方 `fileUpload`，再把上传凭证交给官方 `/ark-media` 命令。图片也使用原文件链，解决宿主默认图片入口可能规范化图片的问题。
 
-`0.1.0-alpha.6` 另为缺少 `fileUpload/readFileStream` 的旧 Web 宿主提供本机兼容路径：面板仍由用户通过浏览器文件选择器明确选择文件，但一次只接收一个显式声明为 `video/mp4` 的原始 MP4。文件按小块经 authority-aware loopback RPC 写到插件专属磁盘 staging，再由不记入会话的短期 token 交给 `/ark-media-local`。服务端不接收桌面路径，也不扫描用户目录。
+`0.1.0-alpha.7` 另为缺少 `fileUpload/readFileStream` 的旧 Web 宿主提供本机兼容路径：面板提供带“选择原始 MP4”语义标签的加号，由用户通过浏览器文件选择器明确选择文件，但一次只接收一个显式声明为 `video/mp4` 的原始 MP4。文件按小块经 authority-aware loopback RPC 写到插件专属磁盘 staging，再由不记入会话的短期 token 交给 `/ark-media-local`。服务端不接收桌面路径，也不扫描用户目录。
 
 ## 使用
 

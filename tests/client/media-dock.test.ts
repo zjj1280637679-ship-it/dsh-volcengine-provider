@@ -27,6 +27,11 @@ function button(text: string): HTMLButtonElement {
   if (result === undefined) throw new Error(`Missing ${text}`)
   return result
 }
+function labelledButton(label: string): HTMLButtonElement {
+  const result = container.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement | null
+  if (result === null) throw new Error(`Missing ${label}`)
+  return result
+}
 async function change(label: string, value: string): Promise<void> {
   await act(async () => {
     const element = container.querySelector(`[aria-label="${label}"]`) as HTMLInputElement | HTMLTextAreaElement
@@ -96,7 +101,10 @@ it('keeps the media action disabled when unavailable and does not inspect subage
   const ops = operations()
   vi.mocked(ops.check).mockRejectedValue(new Error('请选择火山方舟模型'))
   await act(async () => root.render(createElement(MediaDock, { operations: ops, session })))
-  expect(button('添加原始媒体').disabled).toBe(true)
+  const add = labelledButton('添加原始媒体')
+  expect(add.disabled).toBe(true)
+  expect(add.textContent).toBe('+')
+  expect(add.title).toBe('添加原始媒体')
   expect(button('发送媒体').disabled).toBe(true)
   vi.mocked(ops.check).mockClear()
   await act(async () => root.render(createElement(MediaDock, { operations: ops, session: { ...session, subagent: {} } })))
@@ -120,7 +128,12 @@ it('labels and constrains the loopback path as one unmodified original MP4', asy
   const picker = container.querySelector('input[type=file]') as HTMLInputElement
   expect(picker.multiple).toBe(false)
   expect(picker.accept).toBe('video/mp4')
-  expect(button('选择原始 MP4')).toBeTruthy()
+  const add = labelledButton('选择原始 MP4')
+  expect(add.textContent).toBe('+')
+  expect(add.title).toBe('选择原始 MP4')
+  const openPicker = vi.spyOn(picker, 'click')
+  await act(async () => add.click())
+  expect(openPicker).toHaveBeenCalledOnce()
   await files(new File(['first'], 'first.mp4'), new File(['second'], 'second.mp4'))
   expect(container.textContent).toContain('first.mp4')
   expect(container.textContent).not.toContain('second.mp4')

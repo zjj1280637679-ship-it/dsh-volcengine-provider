@@ -1,4 +1,4 @@
-# 本机接手：alpha.6 火山方舟插件
+# 本机接手：alpha.7 火山方舟插件
 
 目标为：配置方舟供应商 → 选模型 → 从会话 UI 发送文本或用户主动选择的媒体 → 收到回复或明确错误 → 完整关闭并重启同一个 Harness 后仍能继续。插件复用 Harness 的配置、凭据、模型选择、命令和会话接口；旧宿主缺少原文件上传能力时，仅在 loopback Web 中补一个原始 MP4 分块入口。
 
@@ -17,13 +17,13 @@ pnpm run test:package
 npm pack
 ```
 
-完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.6` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.6.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务；真实联调只使用 Harness 已配置的凭据，不读取或输出密钥值。
+完整代码目前在本地 `codex/local-loop-20260906` 分支，基于 `media-live-v0.1`（PR #6），不要使用尚不完整的 `main`。这是未发布的 `0.1.0-alpha.7` 包；打包产物为 `dsh-volcengine-provider-0.1.0-alpha.7.tgz`。离线复验不需要方舟密钥，不调用真实方舟服务；真实联调只使用 Harness 已配置的凭据，不读取或输出密钥值。
 
 ## 2. 确认宿主，再安装启用
 
 下列命令以电脑上已经安装、可运行的 Harness CLI `dsh` 为前提。
 
-新版宿主的原始媒体入口使用公共 `fileUpload`、Commands 和附件 `readFileStream`。兼容安装目标 Harness `0.1.1-rc.2` 没有原文件接口，也没有 `remote.llm`；`alpha.6` 不把后者设为硬依赖，而是在当前 loopback Web 中通过 authority-aware RPC 分块暂存一个用户明确选择并声明为 `video/mp4` 的原始 MP4，再由 token-only 命令写入当前会话。入口不扫描桌面或其它用户目录，不抽帧、不转码、不修改文件字节。`0.1.1-rc.2` 的高级方舟表单在 Plugins 页挂载，Models 页仍用于查看和选择模型。插件按公共能力检测挂载，不按精确宿主版本锁定；升级后仍必须复验 ABI、UI 和真实请求。
+新版宿主的原始媒体入口使用公共 `fileUpload`、Commands 和附件 `readFileStream`。兼容安装目标 Harness `0.1.1-rc.2` 没有原文件接口，也没有 `remote.llm`；`alpha.7` 不把后者设为硬依赖，而是在当前 loopback Web 中通过 authority-aware RPC 分块暂存一个用户明确选择并声明为 `video/mp4` 的原始 MP4，再由 token-only 命令写入当前会话。可见入口为带语义标签和悬浮说明的加号；它不扫描桌面或其它用户目录，不抽帧、不转码、不修改文件字节。`0.1.1-rc.2` 的高级方舟表单在 Plugins 页挂载，Models 页仍用于查看和选择模型。插件按公共能力检测挂载，不按精确宿主版本锁定；升级后仍必须复验 ABI、UI 和真实请求。
 
 Coding Plan 接入条件以[火山方舟 DeepSeek Harness 专项文档](https://console.volcengine.com/ark/region:cn-beijing/docs/82379/2637930?lang=zh)为准：本插件选择其列出的 OpenAI Chat Completions 协议、`https://ark.cn-beijing.volces.com/api/coding/v3` 与 `ark-code-latest`。不要把 Coding Plan 密钥改配到普通 `/api/v3`，否则会进入按量计费通道。
 
@@ -33,7 +33,7 @@ Coding Plan 接入条件以[火山方舟 DeepSeek Harness 专项文档](https://
 
 ```powershell
 dsh --version
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.6.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.7.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
