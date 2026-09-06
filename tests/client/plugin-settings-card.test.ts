@@ -41,7 +41,7 @@ it('shows only the routes present in a partial rc.2 profile', () => {
   })])
 })
 
-it('identifies all three routes in visible headings and saves different cards in sequence without losing either draft', async () => {
+it('selects one route at a time while preserving hidden drafts, expanded models and independent saves', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const container = document.createElement('div')
   document.body.append(container)
@@ -73,6 +73,10 @@ it('identifies all three routes in visible headings and saves different cards in
   try {
     await act(async () => root.render(createElement(VolcenginePluginSettingsCard, { operations })))
     const cards = [...container.querySelectorAll('section')]
+    const panels = [...container.querySelectorAll<HTMLDivElement>('[data-ark-route]')]
+    const choices = [...container.querySelectorAll<HTMLButtonElement>('nav button')]
+    expect(panels.map(panel => panel.hidden)).toEqual([false, true, true])
+    expect(choices.map(button => button.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false'])
     expect([...container.querySelectorAll('h3')].map(node => node.textContent)).toEqual([
       '火山方舟 · 普通 API', '火山方舟 · Agent Plan', '火山方舟 · Coding Plan',
     ])
@@ -80,19 +84,28 @@ it('identifies all three routes in visible headings and saves different cards in
     expect(cards[1].textContent).toContain('https://ark.cn-beijing.volces.com/api/plan/v3')
     expect(cards[2].textContent).toContain('https://ark.cn-beijing.volces.com/api/coding/v3')
     for (const [index, id] of ['standard-edited', 'agent-edited'].entries()) {
+      await act(async () => choices[index]!.click())
+      expect(panels.filter(panel => !panel.hidden)).toEqual([panels[index]])
       await act(async () => {
         cards[index].querySelector<HTMLElement>('.ark-model-summary')!.click()
         const model = cards[index].querySelector<HTMLInputElement>('[aria-label="模型 ID"]')!
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(model, id)
         model.dispatchEvent(new Event('input', { bubbles: true }))
       })
+      expect(choices[index]!.textContent).toContain('有未保存修改')
     }
-    for (const card of cards.slice(0, 2)) {
+    for (const [index, card] of cards.slice(0, 2).entries()) {
+      await act(async () => choices[index]!.click())
+      expect(card.querySelector<HTMLDetailsElement>('.ark-model-row')!.open).toBe(true)
+      expect(card.querySelector<HTMLInputElement>('[aria-label="模型 ID"]')!.value)
+        .toBe(['standard-edited', 'agent-edited'][index])
       expect(card.textContent).toContain('有未保存修改')
       await act(async () => [...card.querySelectorAll('button')]
         .find(button => button.textContent === '保存方舟配置')!.click())
       expect(card.querySelector('[role="alert"]')).toBeNull()
       expect(card.textContent).toContain('已保存，后续请求使用新配置。')
+      expect(card.querySelector<HTMLDetailsElement>('.ark-model-row')!.open).toBe(true)
+      expect(choices[index]!.textContent).not.toContain('有未保存修改')
     }
     expect(revisions).toEqual([1, 2])
     expect(current.namespaces[0].value).toMatchObject({ routes: {
@@ -125,5 +138,51 @@ it('provides a retry after the outer Plugins card fails to load', async () => {
     expect(container.textContent).toContain('尚未添加模型')
   } finally {
     await act(async () => root.unmount())
+  }
+})
+
+it('keeps a hidden validation failure from stealing focus and retains its credential draft', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const operations: CardOperations = {
+    read: async () => description({
+      standard: { kind: 'standard', models: [{ id: 'standard-model' }] },
+      'coding-plan': { kind: 'coding-plan', models: [{ id: 'coding-model' }] },
+    }),
+    describeCredential: async () => undefined,
+    saveSettings: vi.fn(), saveCredential: vi.fn(),
+  }
+  try {
+    await act(async () => root.render(createElement(VolcenginePluginSettingsCard, { operations })))
+    const cards = [...container.querySelectorAll('section')]
+    const choices = [...container.querySelectorAll<HTMLButtonElement>('nav button')]
+    const model = cards[0]!.querySelector<HTMLInputElement>('[aria-label="模型 ID"]')!
+    const credential = cards[0]!.querySelector<HTMLInputElement>('[aria-label="API Key"]')!
+    await act(async () => {
+      cards[0]!.querySelector<HTMLElement>('.ark-model-summary')!.click()
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setValue.call(model, '')
+      model.dispatchEvent(new Event('input', { bubbles: true }))
+      setValue.call(credential, 'temporary-unsaved-test-key')
+      credential.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      [...cards[0]!.querySelectorAll('button')].find(button => button.textContent === '保存方舟配置')!.click()
+      choices[1]!.focus()
+      choices[1]!.click()
+    })
+    expect(document.activeElement).toBe(choices[1])
+    expect(cards[0]!.querySelector('[role="alert"]')?.textContent).toContain('必须填写模型 ID')
+    expect(operations.saveSettings).not.toHaveBeenCalled()
+    expect(operations.saveCredential).not.toHaveBeenCalled()
+    await act(async () => choices[0]!.click())
+    expect(document.activeElement).toBe(model)
+    expect(credential.value).toBe('temporary-unsaved-test-key')
+    expect(model.closest<HTMLDetailsElement>('.ark-model-row')!.open).toBe(true)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
   }
 })

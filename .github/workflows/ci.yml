@@ -35,6 +35,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Verify public Host contracts and input slots
+        run: pnpm test:host-abi
+
       - name: Freedom + Fake Ark + Adapter + Host + UI tests
         run: pnpm test:ci
 

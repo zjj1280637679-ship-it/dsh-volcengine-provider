@@ -68,6 +68,30 @@ function fixture(initial: string, ready = new Map<string, ReturnType<typeof summ
 }
 
 describe('native media with the installed Harness composer', () => {
+  it('keeps individual original file metadata inside one native attachment group', async () => {
+    const current = fixture(question)
+    const files = [
+      new File([new Uint8Array([0, 1, 255])], 'photo.png', { type: 'image/png' }),
+      new File([new Uint8Array([2, 3, 254, 255])], 'clip.mp4', { type: 'video/mp4' }),
+    ]
+    const operations = current.bridge.operations(SESSION)
+    await operations.addFiles(files)
+    await vi.waitFor(() => expect(operations.state.getSnapshot().uploads).toBe(0))
+    expect(current.shell.state.getSnapshot().occurrences).toHaveLength(1)
+    expect(current.shell.state.getSnapshot().draft.endsWith(question)).toBe(true)
+    expect(operations.state.getSnapshot().bundles).toMatchObject([{
+      label: 'photo.png +1', state: 'ready', files: [
+        { name: 'photo.png', modality: 'image', mediaType: 'image/png', bytes: 3, uploadedBytes: 3 },
+        { name: 'clip.mp4', modality: 'video', mediaType: 'video/mp4', bytes: 4, uploadedBytes: 4 },
+      ],
+    }])
+    const chunks = current.rpc.mock.calls.filter(call => call[1] === 'native-append')
+      .map(call => call[2] as { fileId: string; data: string })
+    const uploaded = [...new Set(chunks.map(chunk => chunk.fileId))].map(fileId => chunks
+      .filter(chunk => chunk.fileId === fileId).flatMap(chunk => [...atob(chunk.data)].map(char => char.charCodeAt(0))))
+    expect(uploaded).toEqual([[0, 1, 255], [2, 3, 254, 255]])
+  })
+
   it.each(['queue', 'steer'] as const)('preserves two separately added bundles and all text through refresh and %s', async mode => {
     const first = fixture(question)
     for (const name of ['first.mp4', 'second.mp4']) {
@@ -91,6 +115,7 @@ describe('native media with the installed Harness composer', () => {
     resumed.shell.submit(mode)
     await vi.waitFor(() => expect(resumed.sent).toEqual([{ text: before.draft.trim(), mode }]))
     expect(resumed.shell.state.getSnapshot().draft).toBe('')
+    expect(resumed.bridge.operations(SESSION).state.getSnapshot().bundles).toHaveLength(0)
     expect(resumed.rpc.mock.calls.filter(call => call[1] === 'native-discard')).toHaveLength(0)
   })
 
@@ -112,5 +137,6 @@ describe('native media with the installed Harness composer', () => {
       ['document-source', 'document'], [NATIVE_MEDIA_REFERENCE_SOURCE, FIRST], [NATIVE_MEDIA_REFERENCE_SOURCE, SECOND],
     ])
     expect(current.rpc.mock.calls.filter(call => call[1] === 'native-discard')).toHaveLength(0)
+    expect(current.bridge.operations(SESSION).state.getSnapshot().bundles.map(bundle => bundle.bundleId)).toEqual([FIRST, SECOND])
   })
 })

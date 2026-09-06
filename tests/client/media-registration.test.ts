@@ -92,4 +92,33 @@ describe('native media Connection lifecycle adaptation', () => {
     expect(scope.effect).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('no supported lifecycle state source'))
   })
+
+  it('mounts the compact picker and full-width details through list slots without replacing native attachments', () => {
+    const generation = lifecycleStore(undefined)
+    const dispose = vi.fn()
+    const registerSlot = vi.fn(() => dispose)
+    const injectSlot = vi.fn((_name: string, register: () => () => void) => register())
+    const services: Record<string, unknown> = {
+      connection: { isLoopback: true, rpc: { call: vi.fn() }, generation },
+      modelDirectories: { directoryFor: vi.fn() },
+      sessions: { scope: vi.fn(), subagentAddress: vi.fn() },
+      conversation: { input: { for: vi.fn() } },
+      inputTriggers: { registerSource: vi.fn(() => () => {}) },
+      slots: { inject: injectSlot, register: registerSlot },
+    }
+    const effects: (() => void)[] = []
+    const scope = {
+      get: (name: string) => services[name],
+      logger: { warn: vi.fn() },
+      effect: (effect: () => () => void) => { effects.push(effect()) },
+    }
+    const ctx = {
+      inject: (_dependencies: readonly string[], callback: (value: typeof scope) => void) => callback(scope),
+    } as unknown as Context
+    registerMediaPlus(ctx)
+    expect(injectSlot.mock.calls.map(call => call[0])).toEqual(['conversation.input.left', 'conversation.input.dock'])
+    expect(registerSlot.mock.calls).toHaveLength(2)
+    for (const effect of effects) effect()
+    expect(generation.stop).toHaveBeenCalledOnce()
+  })
 })

@@ -22,8 +22,8 @@ afterEach(async () => {
   container.remove()
 })
 
-function input(label: string): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement {
-  const element = container.querySelector(`[aria-label="${label}"]`)
+function input(label: string, scope: ParentNode = container): HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement {
+  const element = scope.querySelector(`[aria-label="${label}"]`)
   if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement)) {
     throw new Error(`Missing control: ${label}`)
   }
@@ -37,9 +37,9 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-async function change(label: string, value: string): Promise<void> {
+async function change(label: string, value: string, scope: ParentNode = container): Promise<void> {
   await act(async () => {
-    const element = input(label)
+    const element = input(label, scope)
     const details: HTMLDetailsElement[] = []
     for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
       if (parent instanceof HTMLDetailsElement && !parent.open) details.unshift(parent)
@@ -119,10 +119,10 @@ describe('Volcengine Models card', () => {
     const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存方舟配置')!
     expect(save.disabled).toBe(true)
     await change('搜索模型', '主模型')
-    expect(container.querySelectorAll('.ark-model-row')).toHaveLength(1)
+    expect(container.querySelectorAll('.ark-model-row:not([hidden])')).toHaveLength(1)
     await change('搜索模型', 'FLASH')
-    expect(container.querySelectorAll('.ark-model-row')).toHaveLength(1)
-    expect(container.querySelector('.ark-model-summary')?.textContent).toContain('flash-two')
+    expect(container.querySelectorAll('.ark-model-row:not([hidden])')).toHaveLength(1)
+    expect(container.querySelector('.ark-model-row:not([hidden]) > .ark-model-summary')?.textContent).toContain('flash-two')
     await change('搜索模型', '')
     const restored = [...container.querySelectorAll<HTMLDetailsElement>('.ark-model-row')]
     await act(async () => {
@@ -131,7 +131,7 @@ describe('Volcengine Models card', () => {
     })
     expect(restored[1].open).toBe(true)
     await click('移除模型 1')
-    const remaining = container.querySelector<HTMLDetailsElement>('.ark-model-row')!
+    const remaining = container.querySelector<HTMLDetailsElement>('.ark-model-row:not([hidden])')!
     expect(remaining.querySelector('summary')?.textContent).toContain('flash-two')
     expect(remaining.open).toBe(true)
     expect(container.textContent).toContain('有未保存修改')
@@ -152,6 +152,110 @@ describe('Volcengine Models card', () => {
     }] }])
     expect(input('自定义请求体 JSON').value).toBe(rawBody)
     expect(container.textContent).toContain('已保存')
+  })
+
+  it('preserves expanded rows and advanced editors across search and a successful save', async () => {
+    const fixture = setup()
+    fixture.readView().value = { routes: { standard: { kind: 'standard', models: [
+      { id: 'first', name: '主模型' }, { id: 'second' }, { id: 'third' }, { id: 'fourth' }, { id: 'fifth' },
+    ] } } }
+    vi.mocked(fixture.operations.describeCredential).mockResolvedValue({ configured: true, writable: true })
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    const row = container.querySelector<HTMLDetailsElement>('.ark-model-row')!
+    const advanced = row.querySelector<HTMLDetailsElement>('.ark-model-advanced')!
+    expect(input('模型显示名称', row).closest('details')).toBe(row)
+    const body = `{ "thinking": { "type": "enabled" }, "vendor_text": "${'长字段'.repeat(8000)}" }`
+    await change('自定义请求体 JSON', body, row)
+    expect(row.open).toBe(true)
+    expect(advanced.open).toBe(true)
+    await change('搜索模型', 'second')
+    expect(row.hidden).toBe(true)
+    await click('保存方舟配置')
+    expect(row.isConnected).toBe(true)
+    expect(row.open).toBe(true)
+    expect(advanced.open).toBe(true)
+    await change('搜索模型', '')
+    expect(row.hidden).toBe(false)
+    expect(container.querySelector('.ark-model-row')).toBe(row)
+    expect(input('自定义请求体 JSON', row).value).toBe(body)
+    const savedModels = (fixture.readView().value as { routes: { standard: { models: Array<{ id: string; customBody?: string }> } } }).routes.standard.models
+    expect(savedModels.map(model => model.id)).toEqual(['first', 'second', 'third', 'fourth', 'fifth'])
+    expect(savedModels[0]!.customBody).toBe(body)
+  })
+
+  it.each([
+    ['模型 ID', '', false],
+    ['模型 ID', 'first', false],
+    ['上下文容量', '0', true],
+    ['输出上限', '1.5', true],
+    ['智能体媒体续链预算', '-1', true],
+    ['自定义请求体 JSON', '{broken', true],
+  ] as const)('reveals and focuses a hidden invalid %s field (%s)', async (label, value, advancedField) => {
+    const fixture = setup()
+    fixture.readView().value = { routes: { standard: { kind: 'standard', models: [
+      { id: 'first' }, { id: 'second' }, { id: 'third' }, { id: 'fourth' }, { id: 'fifth' },
+    ] } } }
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    const row = container.querySelectorAll<HTMLDetailsElement>('.ark-model-row')[1]!
+    await change(label, value, row)
+    const advanced = row.querySelector<HTMLDetailsElement>('.ark-model-advanced')!
+    await act(async () => {
+      if (advanced.open) advanced.querySelector<HTMLElement>('summary')!.click()
+      row.querySelector<HTMLElement>('.ark-model-summary')!.click()
+    })
+    await change('搜索模型', 'third')
+    expect(row.hidden).toBe(true)
+    await click('保存方舟配置')
+    expect(input('搜索模型').value).toBe('')
+    expect(row.hidden).toBe(false)
+    expect(row.open).toBe(true)
+    expect(advanced.open).toBe(advancedField)
+    expect(document.activeElement).toBe(input(label, row))
+    expect(input(label, row).getAttribute('aria-invalid')).toBe('true')
+    expect(row.querySelector('.ark-model-summary')!.textContent).toContain('待修正')
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
+    expect(fixture.saveCredential).not.toHaveBeenCalled()
+  })
+
+  it('undoes individual removals in either order without losing JSON or edits to other models', async () => {
+    const fixture = setup()
+    fixture.readView().value = { routes: { standard: { kind: 'standard', models: [
+      { id: 'first' }, { id: 'second', future: { preserve: true } }, { id: 'third' }, { id: 'fourth' },
+    ] } } }
+    vi.mocked(fixture.operations.describeCredential).mockResolvedValue({ configured: true, writable: true })
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    const rows = [...container.querySelectorAll<HTMLDetailsElement>('.ark-model-row')]
+    const body = `{ "vendor_text": "${'长字段'.repeat(8000)}" }`
+    await change('自定义请求体 JSON', body, rows[1])
+    await change('模型显示名称', '第四个模型的新名称', rows[3])
+    await act(async () => rows[1]!.querySelector<HTMLButtonElement>('[aria-label="移除模型 second"]')!.click())
+    await act(async () => rows[2]!.querySelector<HTMLButtonElement>('[aria-label="移除模型 third"]')!.click())
+    expect(rows[1]!.hidden).toBe(true)
+    expect(rows[2]!.hidden).toBe(true)
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="撤销移除 third"]')!.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="撤销移除 second"]')!.click())
+    expect(rows[1]!.open).toBe(true)
+    expect(rows[1]!.querySelector<HTMLDetailsElement>('.ark-model-advanced')!.open).toBe(true)
+    await click('保存方舟配置')
+    expect(fixture.readView().value).toMatchObject({ routes: { standard: { models: [
+      { id: 'first' }, { id: 'second', customBody: body, future: { preserve: true } },
+      { id: 'third' }, { id: 'fourth', name: '第四个模型的新名称' },
+    ] } } })
+    expect(container.querySelector('[aria-label="待保存的模型移除"]')).toBeNull()
+  })
+
+  it('saves a provider before adding models or credentials without silently disabling it', async () => {
+    const fixture = setup(true)
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    await change('通道显示名称', '稍后配置模型的通道')
+    await click('保存方舟配置')
+    expect(fixture.readView().value).toMatchObject({ routes: { standard: {
+      name: '稍后配置模型的通道', enabled: true, models: [], apiKeyEnv: 'ARK_STANDARD_API_KEY',
+    } } })
+    expect(container.textContent).toContain('未就绪：待添加模型和密钥')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('添加模型并配置密钥')
+    expect(fixture.saveCredential).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('edits models, force-enabled video and JSON through the DOM while preserving unknown settings', async () => {

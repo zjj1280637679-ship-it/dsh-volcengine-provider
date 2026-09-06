@@ -48,26 +48,39 @@ export function parseCustomBody(text: string): Record<string, unknown> | undefin
   return value
 }
 
-export function validateModels(models: readonly DraftModelCard[]): string | undefined {
+export type ModelField = 'id' | 'contextWindow' | 'maxTokens' | 'agentMediaFallbackMB' | 'customBody'
+export interface ModelValidationIssue { index: number; field: ModelField; message: string }
+
+/** Keep field locations with the validation result so the editor can reveal the failing row. */
+export function modelValidationIssue(models: readonly DraftModelCard[]): ModelValidationIssue | undefined {
   const ids = new Set<string>()
   for (const [index, model] of models.entries()) {
     const id = typeof model.id === 'string' ? model.id.trim() : ''
-    if (!id) return `第 ${index + 1} 个模型必须填写模型 ID。`
-    if (ids.has(id)) return `模型 ID 重复：${id}。`
+    if (!id) return { index, field: 'id', message: `第 ${index + 1} 个模型必须填写模型 ID。` }
+    if (ids.has(id)) return { index, field: 'id', message: `模型 ID 重复：${id}。` }
     ids.add(id)
     for (const [field, label] of [['contextWindow', '上下文容量'], ['maxTokens', '输出上限']] as const) {
       const value = model[field]
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
-        return `第 ${index + 1} 个模型的${label}必须为正整数。`
+        return { index, field, message: `第 ${index + 1} 个模型的${label}必须为正整数。` }
       }
     }
     const fallbackMB = model.agentMediaFallbackMB
     if (fallbackMB !== undefined && (!Number.isFinite(fallbackMB) || fallbackMB < 0
       || fallbackMB * 1_000_000 > Number.MAX_SAFE_INTEGER)) {
-      return `第 ${index + 1} 个模型的智能体媒体续链预算必须是非负有限十进制 MB；0 表示关闭。`
+      return { index, field: 'agentMediaFallbackMB', message: `第 ${index + 1} 个模型的智能体媒体续链预算必须是非负有限十进制 MB；0 表示关闭。` }
+    }
+    if (typeof model.customBody === 'string') {
+      try { parseCustomBody(model.customBody) } catch (error) {
+        return { index, field: 'customBody', message: `第 ${index + 1} 个模型：${(error as Error).message}` }
+      }
     }
   }
   return undefined
+}
+
+export function validateModels(models: readonly DraftModelCard[]): string | undefined {
+  return modelValidationIssue(models)?.message
 }
 
 /** Compare JSON-shaped settings without depending on object member order. */

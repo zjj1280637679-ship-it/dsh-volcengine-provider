@@ -1,9 +1,9 @@
-import { createElement as h, useEffect, useState } from 'react'
+import { createElement as h, useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { RouteKind } from '../routes.js'
 import { VolcengineCard } from './Card.js'
-import type { ProviderCardDescriptor } from './Card.js'
+import type { ProviderCardDescriptor, ProviderCardState } from './Card.js'
 import type { CardOperations, SettingsDescribeValue } from './operations.js'
 
 export interface VolcenginePluginSettingsCardProps {
@@ -49,10 +49,16 @@ export function VolcenginePluginSettingsCard(
   const [providers, setProviders] = useState<ProviderCardDescriptor[]>()
   const [failure, setFailure] = useState<string>()
   const [reload, setReload] = useState(0)
+  const [selected, setSelected] = useState<string>()
+  const [states, setStates] = useState<Record<string, ProviderCardState>>({})
+  const updateState = useCallback((provider: string, state: ProviderCardState) => {
+    setStates(current => ({ ...current, [provider]: state }))
+  }, [])
   useEffect(() => {
     let active = true
     setFailure(undefined)
     setProviders(undefined)
+    setStates({})
     void operations.read().then(description => {
       if (active) setProviders(pluginSettingsProviders(description))
     }).catch(error => {
@@ -66,10 +72,28 @@ export function VolcenginePluginSettingsCard(
     h('button', { type: 'button', onClick: () => setReload(current => current + 1) }, '重新加载方舟配置'))
   if (providers === undefined) return h('p', null, '正在加载方舟配置…')
   if (providers.length === 0) return h('p', null, '当前没有可配置的方舟通道。')
-  return h('div', { 'aria-label': '火山方舟供应商配置', style: { display: 'grid', gap: '20px', minWidth: 0 } }, ...providers.map(provider => h(VolcengineCard, {
-    key: provider.provider,
-    provider,
-    operations,
-    showHeader: true,
-  })))
+  const current = providers.some(provider => provider.provider === selected) ? selected : providers[0]!.provider
+  return h('div', { 'aria-label': '火山方舟供应商配置', style: { display: 'grid', gap: '16px', minWidth: 0 } },
+    h('nav', { 'aria-label': '方舟通道', style: { display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: '8px' } },
+    ...providers.map(provider => {
+      const state = states[provider.provider]
+      const active = provider.provider === current
+      return h('button', { key: provider.provider, type: 'button', 'aria-pressed': active,
+        'aria-label': `选择通道 ${state?.name ?? provider.displayName}`,
+        onClick: () => setSelected(provider.provider), style: { display: 'grid', gap: '6px',
+          minWidth: 0, padding: '12px', textAlign: 'start', cursor: 'pointer', font: 'inherit', borderRadius: '10px',
+          border: `1px solid ${active ? 'var(--dsw-alias-brand-primary, #6366f1)' : 'var(--dsw-alias-border-l2, #cbd5e1)'}`,
+          background: active ? 'var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, CanvasText 6%, Canvas))' : 'var(--dsw-alias-bg-layer-1, Canvas)',
+          color: 'var(--dsw-alias-label-primary, CanvasText)' } },
+        h('span', { style: { fontWeight: 600, overflowWrap: 'anywhere' } }, state?.name ?? provider.displayName),
+        h('span', { style: { fontSize: '12px', lineHeight: 1.5 } }, state === undefined ? '正在载入…'
+          : `${state.modelCount} 个模型 · ${state.busy ? '处理中…' : state.dirty ? '有未保存修改' : state.status}`))
+    })),
+    // Keep every visited route mounted: switching sources must not discard JSON,
+    // credential drafts, expansion state, or an already accepted save transaction.
+    ...providers.map(provider => h('div', { key: provider.provider, hidden: provider.provider !== current,
+      'data-ark-route': provider.provider }, h(VolcengineCard, {
+      provider, operations, showHeader: true, visible: provider.provider === current, onStateChange: updateState,
+    }))))
 }

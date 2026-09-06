@@ -61,6 +61,24 @@ function fixture() {
 }
 
 describe('route saves publish one configuration and credential generation', () => {
+  it('persists an enabled empty source before credentials while keeping the model-list path usable', async () => {
+    const test = fixture()
+    test.keys.delete('OLD_REF')
+    const result = await saveRouteConfiguration({ ...test.request(), models: [], changes: { name: 'New source' } })
+    expect(result.route).toMatchObject({ enabled: true, name: 'New source', models: [], apiKeyEnv: 'OLD_REF' })
+    expect(result.credential.configured).toBe(false)
+    const resolveKey = vi.fn(async () => { throw new Error('No key configured yet') })
+    const adapter = new ConfiguredVolcengineAdapter({
+      route: () => resolveConfig(result.namespace.value as Config).routes.standard!,
+      resolveKey, resolveMediaBytes: async () => new Uint8Array(),
+    })
+    await expect(adapter.listModels('volcengine-standard')).resolves.toEqual([])
+    expect(resolveKey).not.toHaveBeenCalled()
+    expect(test.saveCredential).not.toHaveBeenCalled()
+    await expect(saveRouteConfiguration({ ...test.request(), models: [{ id: 'manual-model' }] }))
+      .rejects.toThrow('请填写 API Key')
+  })
+
   it('keeps real runtime requests on the old endpoint/key until one CAS publishes the complete replacement', async () => {
     const test = fixture()
     const stageEntered = deferred()

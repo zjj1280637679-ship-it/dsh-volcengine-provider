@@ -109,7 +109,6 @@ export async function saveRouteConfiguration(request: RouteSaveRequest): Promise
   if (key.length > 0 && selectedRef !== credentialReference(original)) {
     throw new Error('使用手动密钥引用时请留空 API Key；填写新 API Key 会为此通道创建独立引用。')
   }
-  if (draft.enabled !== false && models.length === 0) throw new Error('请至少添加一个模型 ID。')
   if (draft.baseURL !== undefined) {
     let url: URL
     try { url = new URL(draft.baseURL) } catch { throw new Error('请填写有效的 HTTP(S) API 根地址。') }
@@ -128,7 +127,9 @@ export async function saveRouteConfiguration(request: RouteSaveRequest): Promise
   let credential: CredentialInfo
   if (key.length === 0) {
     credential = await request.operations.describeCredential(selectedRef) ?? { configured: false, writable: true }
-    if (draft.enabled !== false && !credential.configured) {
+    // An empty source is a valid first setup step. It advertises no models and
+    // can be saved before credentials are available, without changing enabled.
+    if (draft.enabled !== false && models.length > 0 && !credential.configured) {
       throw new Error('请填写 API Key，或先在运行环境中配置所选密钥引用。')
     }
   } else {

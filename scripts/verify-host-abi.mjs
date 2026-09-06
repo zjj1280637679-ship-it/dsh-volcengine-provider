@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -46,6 +47,9 @@ function packagePath(root, name) {
   const sourceDir = SOURCE_PACKAGE_DIRS[name]
   const source = sourceDir === undefined ? undefined : join(root, sourceDir, 'package.json')
   if (source !== undefined && existsSync(source)) return source
+  // An installed CLI may use a pnpm dependency closure instead of a flat
+  // node_modules tree. Resolve through that Host package's public exports.
+  try { return createRequire(join(root, 'package.json')).resolve(`${name}/package.json`) } catch {}
   throw new Error(`${name} is not resolvable below ${root}`)
 }
 
@@ -136,6 +140,15 @@ async function inspectClientDeclarations(manifestPath, manifest) {
     /insertReference\([^)]*\)\s*:\s*boolean/u,
     /notify\(level\s*:\s*'info'\s*\|\s*'error',\s*text\s*:\s*string\)\s*:\s*void/u,
   ])) missing.push('IConversation SessionInput public structure')
+
+  if (manifest.name === '@deepseek-ai/dsh-client-ui-conversation') {
+    for (const slot of ['conversation.input.left', 'conversation.input.dock']) {
+      const escaped = slot.replaceAll('.', '\\.')
+      if (!new RegExp(`['"]${escaped}['"]\\s*:\\s*\\{\\s*kind\\s*:\\s*'list';\\s*scope\\s*:\\s*'session'`, 'u').test(corpus)) {
+        missing.push(`public session list slot ${slot}`)
+      }
+    }
+  }
 
   if (manifest.name === '@deepseek-ai/dsh-client-ui-input-trigger') {
     const sourceContract = hasAll(corpus, [

@@ -103,6 +103,7 @@ function setup(initialDraft = '') {
     current: { provider: 'volcengine-coding-plan', model: 'doubao-seed-2.0-lite' },
     routable: true,
   }
+  const selectionListeners = new Set<() => void>()
   const appended: Uint8Array[] = []
   let source: NativeMediaDraftBridge['source'] | undefined
   let generated = false
@@ -137,7 +138,9 @@ function setup(initialDraft = '') {
   const services: NativeMediaClientServices = {
     connection: { isLoopback: true, rpc: { call: rpc } },
     directories: { directoryFor: () => ({
-      store: { getSnapshot: () => selection, subscribe: () => () => {} },
+      store: { getSnapshot: () => selection, subscribe: listener => {
+        selectionListeners.add(listener); return () => { selectionListeners.delete(listener) }
+      } },
       load: async () => {},
     }) },
     sessions: { scope: id => id === SESSION ? {} : undefined, subagentAddress: () => undefined },
@@ -150,7 +153,10 @@ function setup(initialDraft = '') {
   return {
     bridge, services, rpc, appended, sessionInput,
     get source() { return source! },
-    select(model: string) { selection = { ...selection, current: { ...selection.current!, model } } },
+    select(model: string) {
+      selection = { ...selection, current: { ...selection.current!, model } }
+      for (const listener of [...selectionListeners]) listener()
+    },
     restoreCrypto() { Object.defineProperty(globalThis, 'crypto', { configurable: true, value: originalCrypto }) },
   }
 }
@@ -186,6 +192,10 @@ describe('native Ark media input side path', () => {
     expect(Uint8Array.from(fixture.appended.flatMap(part => [...part]))).toEqual(bytes)
     expect(fixture.rpc.mock.calls.filter(call => call[1] === 'native-begin')).toHaveLength(1)
     expect(fixture.rpc.mock.calls.filter(call => call[1] === 'native-commit')).toHaveLength(1)
+    expect(fixture.bridge.operations(SESSION).state.getSnapshot()).toMatchObject({
+      uploads: 0,
+      bundles: [{ bundleId: BUNDLE, state: 'ready', files: [{ name: 'clip.mp4', bytes: 6, uploadedBytes: 6 }] }],
+    })
   })
 
   it('blocks native admission on duplicate, stale, or model-mismatched markers', async () => {
@@ -219,6 +229,10 @@ describe('native Ark media input side path', () => {
     expect(state.draft).toBe(`${marker} resumed question`)
     expect(state.occurrences).toEqual([expect.objectContaining({ ref: BUNDLE })])
     expect(fixture.source.lexicon({ sessionId: SESSION })).toContain(`__dsh_volc_media_v1_${BUNDLE}`)
+    expect(fixture.bridge.operations(SESSION).state.getSnapshot().bundles).toEqual([{
+      bundleId: BUNDLE, label: 'clip.mp4', state: 'ready',
+      expected: { provider: 'volcengine-coding-plan', model: 'doubao-seed-2.0-lite' },
+    }])
   })
 
   it('does not immediately resurrect a raw marker produced by undoing rehydration', async () => {
@@ -257,6 +271,10 @@ describe('native Ark media input side path', () => {
     expect(fixture.sessionInput.state.getSnapshot().occurrences).toHaveLength(1)
     await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/disk unavailable/u)
     expect(fixture.sessionInput.notify).toHaveBeenCalledWith('error', 'disk unavailable')
+    expect(fixture.bridge.operations(SESSION).state.getSnapshot()).toMatchObject({
+      uploads: 0,
+      bundles: [{ state: 'failed', error: 'disk unavailable', files: [{ uploadedBytes: 0 }] }],
+    })
   })
 
   it('aborts an in-flight transfer and retries retirement when its chip is removed', async () => {
@@ -294,6 +312,106 @@ describe('native Ark media input side path', () => {
     expect(appendSignal!.aborted).toBe(true)
     expect(fixture.rpc.mock.calls.some(call => call[1] === 'native-discard')).toBe(true)
     expect(fixture.sessionInput.notify).not.toHaveBeenCalled()
+    expect(fixture.bridge.operations(SESSION).state.getSnapshot()).toEqual({ uploads: 0, bundles: [] })
+  })
+
+  it('reports only acknowledged bytes and cancels a whole upload without rewriting native text or chips', async () => {
+    const fixture = setup('keep this text')
+    fixtures.push(fixture)
+    let appendSignal: AbortSignal | undefined
+    const originalRpc = fixture.rpc.getMockImplementation()!
+    fixture.rpc.mockImplementation(async (channel, endpoint, payload, signal) => {
+      if (endpoint === 'native-append' && (payload as { offset: number }).offset === 2) {
+        appendSignal = signal
+        return await new Promise((_, reject) => {
+          const aborted = (): void => reject(signal?.reason)
+          if (signal?.aborted) aborted()
+          else signal?.addEventListener('abort', aborted, { once: true })
+        })
+      }
+      return await originalRpc(channel, endpoint, payload, signal)
+    })
+    const operations = fixture.bridge.operations(SESSION)
+    await operations.addFiles([new File(['abcdef'], 'clip.mp4', { type: 'video/mp4' })])
+    await vi.waitFor(() => expect(appendSignal).toBeDefined())
+    expect(operations.state.getSnapshot()).toMatchObject({
+      uploads: 1, bundles: [{ state: 'uploading', files: [{ bytes: 6, uploadedBytes: 2 }] }],
+    })
+    const before = fixture.sessionInput.state.getSnapshot()
+    operations.cancelUpload(BUNDLE)
+    await flush()
+    expect(appendSignal!.aborted).toBe(true)
+    expect(fixture.sessionInput.state.getSnapshot()).toEqual(before)
+    expect(operations.state.getSnapshot()).toMatchObject({
+      uploads: 0, bundles: [{ state: 'cancelled', files: [{ bytes: 6, uploadedBytes: 2 }] }],
+    })
+    expect(fixture.rpc.mock.calls.filter(call => call[1] === 'native-commit')).toHaveLength(0)
+    expect(fixture.rpc.mock.calls.some(call => call[1] === 'native-discard')).toBe(true)
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/上传已取消/u)
+    expect(fixture.sessionInput.notify).not.toHaveBeenCalled()
+  })
+
+  it('refuses cancellation while native submission owns the draft', async () => {
+    const fixture = setup()
+    fixtures.push(fixture)
+    let release!: () => void
+    let appendSignal: AbortSignal | undefined
+    const originalRpc = fixture.rpc.getMockImplementation()!
+    fixture.rpc.mockImplementation(async (channel, endpoint, payload, signal) => {
+      if (endpoint === 'native-append') {
+        appendSignal = signal
+        await new Promise<void>(resolve => { release = resolve })
+      }
+      return await originalRpc(channel, endpoint, payload, signal)
+    })
+    const operations = fixture.bridge.operations(SESSION)
+    await operations.addFiles([new File(['ab'], 'clip.mp4', { type: 'video/mp4' })])
+    await vi.waitFor(() => expect(appendSignal).toBeDefined())
+    fixture.sessionInput.replace({ ...fixture.sessionInput.state.getSnapshot(), phase: 'submitting' })
+    operations.cancelUpload(BUNDLE)
+    expect(appendSignal!.aborted).toBe(false)
+    expect(fixture.sessionInput.notify).toHaveBeenCalledWith('info', '请先取消当前发送操作，再取消附件上传。')
+    release()
+    await fixture.source.codec.serialize(BUNDLE, new AbortController().signal)
+    expect(operations.state.getSnapshot().bundles[0]!.state).toBe('ready')
+  })
+
+  it('does not announce readiness when the model changes during the final commit', async () => {
+    const fixture = setup('keep this text')
+    fixtures.push(fixture)
+    let release!: () => void
+    const originalRpc = fixture.rpc.getMockImplementation()!
+    fixture.rpc.mockImplementation(async (channel, endpoint, payload, signal) => {
+      if (endpoint === 'native-commit') await new Promise<void>(resolve => { release = resolve })
+      return await originalRpc(channel, endpoint, payload, signal)
+    })
+    const operations = fixture.bridge.operations(SESSION)
+    await operations.addFiles([new File(['ab'], 'clip.mp4', { type: 'video/mp4' })])
+    await vi.waitFor(() => expect(release).toBeDefined())
+    fixture.select('changed-model')
+    release()
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/selected model changed/u)
+    expect(operations.state.getSnapshot()).toMatchObject({
+      uploads: 0, bundles: [{ state: 'failed', files: [{ uploadedBytes: 2 }] }],
+    })
+    expect(fixture.sessionInput.state.getSnapshot().draft).toContain('keep this text')
+  })
+
+  it('does not report unconfirmed chunks as progress or attempt an automatic retry', async () => {
+    const fixture = setup()
+    fixtures.push(fixture)
+    const originalRpc = fixture.rpc.getMockImplementation()!
+    fixture.rpc.mockImplementation(async (channel, endpoint, payload, signal) => endpoint === 'native-append'
+      ? { ok: true, value: { receivedBytes: 1 } }
+      : await originalRpc(channel, endpoint, payload, signal))
+    const operations = fixture.bridge.operations(SESSION)
+    await operations.addFiles([new File(['ab'], 'clip.mp4', { type: 'video/mp4' })])
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/did not confirm/u)
+    expect(operations.state.getSnapshot()).toMatchObject({
+      uploads: 0, bundles: [{ state: 'failed', files: [{ uploadedBytes: 0 }] }],
+    })
+    expect(fixture.rpc.mock.calls.filter(call => call[1] === 'native-append')).toHaveLength(1)
+    expect(fixture.rpc.mock.calls.filter(call => call[1] === 'native-commit')).toHaveLength(0)
   })
 
   it('cancels only in-flight work when the client plugin is disposed', async () => {

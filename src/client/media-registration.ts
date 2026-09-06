@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 
 import { hasMethods, hasSlotRegistry } from '../host-compat.js'
-import { MediaPlus } from './MediaPlus.js'
+import { MediaAttachments, MediaPlus } from './MediaPlus.js'
 import {
   NativeMediaDraftBridge,
   type NativeMediaClientServices,
@@ -145,5 +145,11 @@ export function registerMediaPlus(ctx: Context): void {
       order: 31,
       inject: sessionId => ({ operations: bridge.operations(sessionId) }),
     }, MediaPlus))
+    mediaSlots.inject('conversation.input.dock', () => mediaSlots.register({
+      name: 'conversation.input.dock',
+      id: 'volcengine-native-media-details',
+      order: 31,
+      inject: sessionId => ({ operations: bridge.operations(sessionId) }),
+    }, MediaAttachments))
   })
 }

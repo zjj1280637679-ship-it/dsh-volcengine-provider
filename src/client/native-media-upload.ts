@@ -130,11 +130,30 @@ interface SessionRecovery {
 
 export interface NativeMediaDraftState {
   readonly uploads: number
+  readonly bundles: readonly NativeMediaDraftBundle[]
+}
+
+export interface NativeMediaDraftFile extends NativeMediaFileDeclaration {
+  /** Bytes acknowledged by the local staging service, without changing the file. */
+  readonly uploadedBytes: number
+}
+
+export interface NativeMediaDraftBundle {
+  readonly bundleId: string
+  readonly label: string
+  readonly expected: MediaSelection
+  readonly state: 'uploading' | 'ready' | 'failed' | 'cancelled'
+  /** Older persisted bundle summaries contain no individual file metadata. */
+  readonly files?: readonly NativeMediaDraftFile[]
+  readonly error?: string
 }
 
 export interface NativeMediaDraftOperations {
   readonly state: ReadableStore<NativeMediaDraftState>
+  readonly selection: ReadableStore<MediaDirectoryState>
+  load(): Promise<void>
   addFiles(files: readonly File[]): Promise<void>
+  cancelUpload(bundleId: string): void
   notify(level: 'info' | 'error', text: string): void
 }
 
@@ -262,6 +281,7 @@ function occurrence(reference: { readonly ref: string }, bundleId: string): bool
 /** Native-composer side path: files stage over loopback; Harness still owns submit/queue/steer. */
 export class NativeMediaDraftBridge {
   private readonly records = new Map<string, DraftRecord>()
+  private readonly details = new Map<string, NativeMediaDraftBundle>()
   private readonly recordSessions = new Map<string, string>()
   private readonly recoveries = new Map<string, SessionRecovery>()
   private readonly operationStores = new Map<string, {
@@ -316,12 +336,16 @@ export class NativeMediaDraftBridge {
 
   operations(sessionId: string): NativeMediaDraftOperations {
     const store = this.store(sessionId)
+    const directory = this.services.directories.directoryFor(sessionId)
     return {
       state: {
         getSnapshot: () => store.value,
         subscribe: listener => { store.listeners.add(listener); return () => { store.listeners.delete(listener) } },
       },
+      selection: directory.store,
+      load: async () => { if (!this.disposed) { await directory.load(); await this.warm(sessionId) } },
       addFiles: files => this.addFiles(sessionId, files),
+      cancelUpload: bundleId => this.cancelUpload(sessionId, bundleId),
       notify: (level, text) => this.input(sessionId).notify(level, text),
     }
   }
@@ -329,16 +353,43 @@ export class NativeMediaDraftBridge {
   private store(sessionId: string): { value: NativeMediaDraftState; listeners: Set<() => void> } {
     let store = this.operationStores.get(sessionId)
     if (store === undefined) {
-      store = { value: { uploads: 0 }, listeners: new Set() }
+      store = { value: { uploads: 0, bundles: [] }, listeners: new Set() }
       this.operationStores.set(sessionId, store)
     }
     return store
   }
 
-  private setUploading(sessionId: string, delta: number): void {
+  private publish(sessionId: string): void {
+    if (this.disposed) return
     const store = this.store(sessionId)
-    store.value = { uploads: Math.max(0, store.value.uploads + delta) }
+    const state = this.recoveries.get(sessionId)?.input.state.getSnapshot()
+    const ids = new Set<string>()
+    if (state !== undefined) {
+      for (const row of state.occurrences) {
+        if (row.source === NATIVE_MEDIA_REFERENCE_SOURCE) ids.add(row.ref)
+      }
+      for (const marker of nativeMediaMarkerIds(state.draft, true)) {
+        // Text encoded by another source is never our attachment.
+        if (!state.occurrences.some(row => row.offset < marker.end
+          && row.offset + row.length > marker.start)) ids.add(marker.bundleId)
+      }
+    }
+    const bundles = [...ids].flatMap(id => {
+      if (this.recordSessions.get(id) !== sessionId) return []
+      const detail = this.details.get(id)
+      return detail === undefined ? [] : [detail]
+    })
+    if (bundles.length === store.value.bundles.length
+      && bundles.every((bundle, index) => bundle === store.value.bundles[index])) return
+    store.value = { uploads: bundles.filter(bundle => bundle.state === 'uploading').length, bundles }
     for (const listener of [...store.listeners]) listener()
+  }
+
+  private updateDetail(sessionId: string, bundleId: string, patch: Partial<NativeMediaDraftBundle>): void {
+    const detail = this.details.get(bundleId)
+    if (detail === undefined) return
+    this.details.set(bundleId, { ...detail, ...patch })
+    this.publish(sessionId)
   }
 
   private input(sessionId: string): SessionInput {
@@ -381,6 +432,10 @@ export class NativeMediaDraftBridge {
     const generation = this.services.generation.getSnapshot()
     const bundleId = secureBundleId()
     const controller = new AbortController()
+    this.details.set(bundleId, {
+      bundleId, label: labelFor(files), expected, state: 'uploading',
+      files: declarations.map(file => ({ ...file, uploadedBytes: 0 })),
+    })
     const upload = this.upload(sessionId, bundleId, expected, generation, files, declarations, controller.signal)
     const record: DraftRecord = {
       sessionId, bundleId, label: labelFor(files), expected, generation,
@@ -396,18 +451,36 @@ export class NativeMediaDraftBridge {
       throw new Error('The Harness draft changed before the Ark attachment could be inserted. Select it again.')
     }
     this.separateLeadingOccurrence(input, bundleId)
-    this.setUploading(sessionId, 1)
+    this.publish(sessionId)
     void upload.then(() => {
       record.state = 'ready'
       if (this.records.get(bundleId) !== record) return
+      this.updateDetail(sessionId, bundleId, { state: 'ready' })
       this.records.delete(bundleId)
-      if (!this.disposed) void this.refresh(sessionId)
+      if (!this.disposed) void this.refresh(sessionId).catch(() => undefined)
     }, error => {
       record.state = 'failed'
       if (!this.disposed && !controller.signal.aborted) {
-        input.notify('error', error instanceof Error ? error.message : 'The Ark media upload failed; remove the attachment chip and select the file again.')
+        const message = error instanceof Error ? error.message : 'The Ark media upload failed; remove the attachment chip and select the file again.'
+        this.updateDetail(sessionId, bundleId, { state: 'failed', error: message })
+        input.notify('error', message)
       }
-    }).finally(() => { if (!this.disposed) this.setUploading(sessionId, -1) })
+    })
+  }
+
+  private cancelUpload(sessionId: string, bundleId: string): void {
+    const record = this.records.get(bundleId)
+    if (record?.sessionId !== sessionId || record.state !== 'uploading') return
+    const input = this.input(sessionId)
+    if (input.state.getSnapshot().phase !== 'plain') {
+      input.notify('info', '请先取消当前发送操作，再取消附件上传。')
+      return
+    }
+    record.state = 'failed'
+    this.updateDetail(sessionId, bundleId, { state: 'cancelled' })
+    record.controller.abort(new DOMException('方舟附件上传已取消，请删除输入框中对应的 Ark 引用。', 'AbortError'))
+    this.discardInBackground(sessionId, bundleId)
+    void record.upload.catch(() => undefined).finally(() => this.discardInBackground(sessionId, bundleId))
   }
 
   private reference(label: string, bundleId: string): ReferenceInsert {
@@ -460,16 +533,25 @@ export class NativeMediaDraftBridge {
         const end = Math.min(file.size, offset + chunkBytes)
         const data = new Uint8Array(await file.slice(offset, end).arrayBuffer())
         signal.throwIfAborted()
-        unwrap(await this.services.connection.rpc.call(NATIVE_MEDIA_RPC_CHANNEL, 'native-append', {
+        const appended = object(unwrap(await this.services.connection.rpc.call(NATIVE_MEDIA_RPC_CHANNEL, 'native-append', {
           sessionId, bundleId, fileId, offset, data: base64Of(data),
-        }, signal))
+        }, signal)))
+        if (appended.receivedBytes !== end) throw new Error('The media staging service did not confirm the uploaded bytes.')
         offset = end
+        const detail = this.details.get(bundleId)
+        if (detail?.state === 'uploading') {
+          this.updateDetail(sessionId, bundleId, {
+            files: detail.files?.map((item, itemIndex) => itemIndex === index
+              ? { ...item, uploadedBytes: offset } : item),
+          })
+        }
       }
     }
     this.assertStable(sessionId, expected, generation, signal)
     const committed = summary(unwrap(await this.services.connection.rpc.call(
       NATIVE_MEDIA_RPC_CHANNEL, 'native-commit', { sessionId, bundleId }, signal,
     )), bundleId)
+    this.assertStable(sessionId, expected, generation, signal)
     if (committed.state !== 'ready') throw new Error('The Ark media bundle was not committed.')
   }
 
@@ -539,6 +621,7 @@ export class NativeMediaDraftBridge {
   }
 
   private async warm(sessionId: string): Promise<void> {
+    if (this.disposed) return
     this.ensureRecovery(sessionId)
     await this.refresh(sessionId).catch(() => undefined)
   }
@@ -548,14 +631,22 @@ export class NativeMediaDraftBridge {
     const rows = listed(unwrap(await this.services.connection.rpc.call(
       NATIVE_MEDIA_RPC_CHANNEL, 'native-list', { sessionId }, undefined,
     )))
+    if (this.disposed) return
     recovery.ready.clear()
     for (const row of rows) {
       recovery.ready.set(row.bundleId, row)
       this.bindSession(row.bundleId, sessionId)
+      if (!this.details.has(row.bundleId) && row.state === 'ready') {
+        this.details.set(row.bundleId, {
+          bundleId: row.bundleId, label: row.label, state: 'ready',
+          expected: { provider: row.expectedProvider, model: row.expectedModel },
+        })
+      }
     }
     recovery.loaded = true
     for (const listener of [...recovery.listeners]) listener()
     this.rehydrate(recovery)
+    this.publish(sessionId)
   }
 
   private inputChanged(_sessionId: string, recovery: SessionRecovery): void {
@@ -590,6 +681,7 @@ export class NativeMediaDraftBridge {
     }
     recovery.previous = current
     this.rehydrate(recovery)
+    this.publish(_sessionId)
   }
 
   private rehydrate(recovery: SessionRecovery): void {
@@ -634,6 +726,7 @@ export class NativeMediaDraftBridge {
     const record = this.records.get(bundleId)
     record?.controller.abort(new DOMException('The Ark media attachment was removed.', 'AbortError'))
     this.records.delete(bundleId)
+    this.details.delete(bundleId)
     this.recordSessions.delete(bundleId)
     this.discardInBackground(sessionId, bundleId)
     if (record !== undefined) {
@@ -661,6 +754,7 @@ export class NativeMediaDraftBridge {
       })
     }
     this.records.clear()
+    this.details.clear()
     this.recordSessions.clear()
     this.operationStores.clear()
   }

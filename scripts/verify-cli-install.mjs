@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // Optional acceptance check against an already installed Harness CLI. It never
 // downloads a Host, starts the browser server, or sends a provider request.
@@ -28,6 +29,11 @@ try {
   assert.equal(manifest.dsh?.profile?.bundles?.filter(name => name === 'dsh-volcengine-provider').length, 1,
     'The installed package must contribute exactly one bundle layer')
   const installed = JSON.parse(await readFile(path.join(profile, 'node_modules', 'dsh-volcengine-provider', 'package.json'), 'utf8'))
+  // Validate the public contracts from this CLI's actual dependency closure,
+  // including the full-width media dock; no plugin-side Host version lock.
+  execFileSync(process.execPath, [
+    fileURLToPath(new URL('./verify-host-abi.mjs', import.meta.url)), path.dirname(path.dirname(await realpath(cli))),
+  ], { env, encoding: 'utf8', timeout: 30_000 })
   const dumps = []
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const dump = run(['--profile', 'web', '--dump-config'])
