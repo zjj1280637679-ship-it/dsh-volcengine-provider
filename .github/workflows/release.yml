@@ -1,9 +1,8 @@
 name: Release verified prerelease
 
 on:
-  push:
-    branches: [main]
-    paths: [package.json, .github/workflows/release.yml]
+  # Publishing performs seven real Coding Plan requests and creates a public
+  # prerelease, so it must always start from an explicit operator action.
   workflow_dispatch:
 
 permissions:

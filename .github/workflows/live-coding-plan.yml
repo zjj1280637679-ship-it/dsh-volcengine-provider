@@ -1,11 +1,8 @@
 name: Coding Plan live probe
 
 on:
-  push:
-    branches: [live-coding-plan-v0.1]
-    paths:
-      - .github/workflows/live-coding-plan.yml
-      - scripts/live-coding-plan.mjs
+  # The former live-coding-plan-v0.1 branch is archived. Paid probes remain
+  # available only through an explicit operator action.
   workflow_dispatch:
 
 permissions:
