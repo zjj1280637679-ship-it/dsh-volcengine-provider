@@ -72,8 +72,7 @@ it('renders only one colored plus and one multi-format hidden picker', async () 
   expect(picker.accept).toContain('.m4a')
   expect(picker.accept).not.toContain('.pdf')
   expect(container.querySelector('textarea')).toBeNull()
-  expect(container.textContent).toContain('方舟媒体')
-  expect(container.textContent).toContain('doubao-seed-2.0-lite')
+  expect(container.textContent).toBe('+')
   expect(ops.load).toHaveBeenCalledOnce()
 })
 
@@ -102,7 +101,7 @@ it('announces active upload groups while keeping the one attachment picker avail
   expect(plus.getAttribute('aria-label')).toBe('添加方舟媒体附件')
   expect(plus.title).toContain('点击可继续添加')
   const status = container.querySelector('[role="status"]')!
-  expect(status.textContent).toContain('方舟媒体 · 2 组上传中')
+  expect(status.textContent).toBe('2 组上传中')
   expect(plus.getAttribute('aria-describedby')).toBe(status.id)
   expect(container.querySelectorAll('button')).toHaveLength(1)
   expect(container.querySelector('textarea')).toBeNull()
@@ -118,12 +117,12 @@ it('shows unavailable selection before opening the picker and reacts to model ch
   expect(plus.disabled).toBe(true)
   expect(picker.disabled).toBe(true)
   expect(plus.title).toBe('请先选择已启用的方舟模型')
-  expect(container.textContent).toContain('先选择方舟模型')
+  expect(container.textContent).toBe('+')
   plus.click()
   expect(click).not.toHaveBeenCalled()
   await act(async () => ops.select({ current: { provider: 'volcengine-standard', model: 'manual-id' }, routable: true }))
   expect(plus.disabled).toBe(false)
-  expect(container.textContent).toContain('manual-id')
+  expect(plus.title).toContain('manual-id')
   expect(ops.addFiles).not.toHaveBeenCalled()
 })
 
@@ -137,14 +136,17 @@ it('shows exact file details and a group cancellation action in the separate doc
     ],
   }] })
   await act(async () => root.render(createElement(MediaAttachments, { operations: ops, session, input })))
-  expect(container.querySelector('details')).not.toBeNull()
+  expect(container.querySelector('details')).toBeNull()
   expect(container.querySelectorAll('li')).toHaveLength(2)
   expect(container.querySelectorAll('progress')).toHaveLength(2)
   expect(container.querySelector('progress')!.getAttribute('value')).toBe('2048')
   expect(container.querySelector('progress')!.getAttribute('max')).toBe('4096')
-  expect(container.textContent).toContain('video/mp4 · 4.0 KB · 上传中')
-  expect(container.textContent).toContain('audio/x-m4a · 100 B · 等待上传')
-  expect(container.textContent).toContain('删除输入框中的该引用会移除整组')
+  expect(container.textContent).toContain('2.0 KB / 4.0 KB')
+  expect(container.textContent).toContain('0 B / 100 B')
+  expect(container.textContent).not.toContain('video/mp4')
+  expect(container.textContent).not.toContain('volcengine-coding-plan')
+  expect(container.textContent).not.toContain('移除整组')
+  expect(container.textContent).not.toContain('附件使用说明')
   expect(container.querySelectorAll('button')).toHaveLength(1)
   ;(container.querySelector('button') as HTMLButtonElement).click()
   expect(ops.cancelUpload).toHaveBeenCalledWith('bundle-a')
@@ -160,9 +162,9 @@ it('surfaces a changed target and failed or restored bundles without inventing f
     expected: { provider: 'volcengine-coding-plan', model: 'old-model' },
   }] })
   await act(async () => root.render(createElement(MediaAttachments, { operations: ops, session, input })))
-  expect(container.textContent).toContain('需要处理')
-  expect(container.querySelector('[role="alert"]')?.textContent).toContain('当前模型与附件不一致')
-  expect(container.textContent).toContain('已恢复附件引用')
+  expect(container.textContent).toContain('模型已改变')
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('附件属于 Coding Plan / old-model')
+  expect(container.textContent).not.toContain('已恢复')
   expect(container.querySelector('progress')).toBeNull()
   expect(container.querySelector('button')).toBeNull()
   await act(async () => ops.publish({ uploads: 0, bundles: [{
@@ -171,13 +173,32 @@ it('surfaces a changed target and failed or restored bundles without inventing f
     files: [{ name: 'clip.mp4', modality: 'video', mediaType: 'video/mp4', bytes: 4, uploadedBytes: 2 }],
   }] }))
   expect(container.textContent).toContain('上传失败')
-  expect(container.textContent).toContain('disk unavailable')
-  expect(container.textContent).toContain('2 B / 4 B')
-  expect(container.textContent).toContain('请删除输入框中对应的 Ark 引用，再重新选择这一组文件')
+  expect(container.textContent).not.toContain('disk unavailable')
+  expect(container.querySelector('progress')).toBeNull()
+  expect(container.textContent).toContain('移除对应附件后重新添加')
+  const detail = [...container.querySelectorAll('summary')].find(item => item.textContent === '错误详情')!
+  await act(async () => detail.click())
+  expect(container.querySelector('pre')?.textContent).toBe('disk unavailable')
   expect(container.querySelector('button')).toBeNull()
 })
 
-it('surfaces picker failures through the native composer notice and respects its phase', async () => {
+it('leaves ready attachments to native chips and removes completed progress from the dock', async () => {
+  const bundle = {
+    bundleId: 'bundle-a', label: 'clip.mp4', state: 'uploading' as const,
+    expected: { provider: 'volcengine-coding-plan', model: 'doubao-seed-2.0-lite' },
+    files: [{ name: 'clip.mp4', modality: 'video' as const, mediaType: 'video/mp4', bytes: 4, uploadedBytes: 2 }],
+  }
+  const ops = operations({ uploads: 1, bundles: [bundle] })
+  await act(async () => root.render(createElement(MediaAttachments, { operations: ops, session, input })))
+  expect(container.querySelector('progress')).not.toBeNull()
+  expect(container.textContent?.match(/clip\.mp4/gu)).toHaveLength(1)
+  await act(async () => ops.publish({ uploads: 0, bundles: [{ ...bundle, state: 'ready' }] }))
+  expect(container.childElementCount).toBe(0)
+  expect(ops.cancelUpload).not.toHaveBeenCalled()
+  expect(ops.state.getSnapshot().bundles).toHaveLength(1)
+})
+
+it('shows a short picker error with on-demand details and respects the native phase', async () => {
   const ops = operations()
   vi.mocked(ops.addFiles).mockRejectedValueOnce(new Error('unsupported media'))
   await act(async () => root.render(createElement(MediaPlus, { operations: ops, session, input })))
@@ -186,7 +207,13 @@ it('surfaces picker failures through the native composer notice and respects its
     value: [new File(['x'], 'bad.pdf', { type: 'application/pdf' })], configurable: true,
   })
   await act(async () => picker.dispatchEvent(new Event('change', { bubbles: true })))
-  expect(ops.notify).toHaveBeenCalledWith('error', 'unsupported media')
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('附件未添加，请检查文件后重试。')
+  expect(container.textContent).not.toContain('unsupported media')
+  expect(ops.notify).not.toHaveBeenCalled()
+  await act(async () => container.querySelector('summary')!.click())
+  expect(container.querySelector('pre')?.textContent).toBe('unsupported media')
+  await act(async () => picker.dispatchEvent(new Event('change', { bubbles: true })))
+  expect(container.querySelector('[role="alert"]')).toBeNull()
 
   await act(async () => root.render(createElement(MediaPlus, {
     operations: ops, session, input: { phase: 'submitting' },

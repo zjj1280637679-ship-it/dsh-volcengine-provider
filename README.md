@@ -1,6 +1,6 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.11` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三条独立通道，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.12` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三条独立通道，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
@@ -35,7 +35,7 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.11` 预
 
 ## 本地构建与安装
 
-本次优化与测评要点见 [alpha.11 发布说明](docs/releases/alpha.11.md)。在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 安装预编译包并完成最小验收。
+本次优化与测评要点见 [alpha.12 发布说明](docs/releases/alpha.12.md)。在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 安装预编译包并完成最小验收。
 
 需要 Node.js `^22.19.0 || >=24.0.0`、本仓库声明的 pnpm，以及已安装的 Harness CLI。
 
@@ -45,7 +45,7 @@ pnpm run typecheck
 pnpm test
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.11.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.12.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -54,7 +54,7 @@ dsh --profile web
 
 从 GitHub commit 直接安装时，包的 `prepare` 会构建 TypeScript；pnpm 10 及以上要求用户在该 profile 明确授权 git 依赖的构建脚本。无需授予构建权限的交付路径仍是上面的预编译 `.tgz`。
 
-这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.11` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.11) 的预编译 `.tgz` 为准；版本标签和被验证的 Release 附件绑定同一候选提交。
+这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.12` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.12) 的预编译 `.tgz` 为准；版本标签和被验证的 Release 附件绑定同一候选提交。
 
 ## 已实现与验证边界
 
@@ -65,7 +65,9 @@ dsh --profile web
 - 自动验证覆盖 Fake Ark HTTP、真实 SessionInputShell 的多次附件选择与草稿恢复、设置竞态及卡片交互；发布流程在 Linux / Windows 检查实际 tarball 的 Loader 启动、官方文件设置持久化和两个独立 Node 进程的文本请求。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 还曾在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成隔离实例验证；那是 [alpha.7 前的历史记录](docs/harness-web-loop-2026-09-06.md)，不能替代当前版本的实机唯一实例与桌面浏览器验收。
 - 历史真实媒体测试中，flash 图片与原始 MP4 的输出通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。发送侧的媒体字节均保持一致，但这只能证明 raw MP4 到 API 的链路与时序输出，不能证明供应商内部未抽帧或等同于 Seed 的原生视频处理，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
 
-输入栏的彩色 `+` 标注为“方舟媒体”，宿主常驻 `+` 用于命令菜单。入口提前显示当前目标，附件详情放在输入框上方的全宽区域，展示本次添加文件的名称、类型、大小和已确认上传进度。多文件仍是一组原生引用；可取消整组上传，移除附件请删除对应的 Ark 引用。刷新后恢复服务端已有的组摘要，尚未持久化的逐文件明细不伪造。
+输入栏保留彩色 `+` 附件按钮，名称与目标放在按钮提示中；宿主常驻 `+` 用于命令菜单。插件只在上传中显示进度和取消操作，或在发生问题时提示处理方式。就绪附件由 Harness 原生标签展示，不再额外保留详情面板、供应商字段和引用机制说明。多文件仍是一组引用；删除一个 Ark 附件标签会移除整组。
+
+已确认的宿主显示边界：历史中的自定义媒体块仍可能以 JSON 展示；忙时队列及未能恢复的草稿也可能出现内部引用标记。本版清理了插件自身的解释性文案，不宣称已解决这两类 Host 展示问题。
 
 用户一次可选择多个方舟 Chat 支持的原图、原视频或原音频，问题仍写在 Harness 主输入框，并由原生发送键、Enter、排队或插话路径提交。插件借用 Harness 的 `conversation.input.left`、`conversation.input.dock`、输入引用 codec 和原生 `Session.prompt` 接口，文本与媒体形成一条用户消息。宿主自己的粘贴、拖放附件尚未统一到本插件的原字节上传路径。
 
@@ -77,7 +79,7 @@ dsh --profile web
 
 用户主动选择的文件没有插件定义的总文件大小上限，也不受“智能体媒体续链预算”影响。安全整数、Node 可表示范围、实时磁盘容量及 V8／系统内存不足属于必须显式报告的物理边界；其余请求体、模型和服务限制交给方舟 API 返回真实错误。带媒体的请求在进程内逐个完成完整原字节读取、Base64／JSON 编码及 HTTP 请求体提交，排队可取消，纯文本不受媒体编码闸门影响。这不是任意大小必然可发的承诺，也不会把文档示例值偷换成插件硬限制。
 
-原图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。媒体引用进入 Harness 后若在 bundle 物化阶段失效，插件保留该条用户文本并添加机器可读诊断；已通过续链预算的 Agent `tool-result` 图片／视频若单块读取、完整性校验或编码失败，也只省略该块并退还预算。取消、显式模态禁用以及请求级 Node 可表示性／实时内存不足仍明确中止，不伪装成成功。用户直接提交后收到的真实方舟拒绝则原样可见，不自动改模型、压缩、重试或抽帧。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md) 与 [第五步媒体输入](docs/step5-media-input.md)。
+原图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。媒体引用进入 Harness 后若在 bundle 物化阶段失效，插件保留该条用户文本并添加简短的附件未发送提示，内部原因码仅写日志；已通过续链预算的 Agent `tool-result` 图片／视频若单块读取、完整性校验或编码失败，也只省略该块并退还预算。取消、显式模态禁用以及请求级 Node 可表示性／实时内存不足仍明确中止，不伪装成成功。用户直接提交后收到的真实方舟拒绝则原样可见，不自动改模型、压缩、重试或抽帧。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md) 与 [第五步媒体输入](docs/step5-media-input.md)。
 
 官方 `ark-plan-api` 与本插件使用不同的配置行和 Provider ID，技术上可共存，但会出现含义相近、凭据与协议路径不同的方舟卡片。验收或长期使用时建议在隔离 profile 中明确选择一种，尤其不要把 Coding Plan 密钥误发到普通 `/api/v3` 通道。
 

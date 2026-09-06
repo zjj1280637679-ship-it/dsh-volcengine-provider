@@ -8,6 +8,8 @@ import {
 } from './draft.js'
 import type { DraftModelCard, DraftRouteConfig, ModelField } from './draft.js'
 import { saveRouteConfiguration } from './route-save.js'
+import { describeUiError, ErrorNotice } from './ui-feedback.js'
+import type { UiError } from './ui-feedback.js'
 
 export interface ProviderCardDescriptor {
   provider: string
@@ -100,10 +102,6 @@ function modelValues(models: readonly ModelDraft[]): DraftModelCard[] {
   })
 }
 
-function failureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请重试。'
-}
-
 interface ModelEditorProps {
   model: ModelDraft
   index: number
@@ -139,7 +137,9 @@ function ModelEditor({ model, index, disabled, hidden, visible, issue, update, r
       ? h('span', { id: errorId, style: { ...small, color: 'var(--dsw-alias-state-error-primary, #b91c1c)' } }, issue.message) : null), hint)
   const change = (patch: Partial<DraftModelCard>): void => update({ ...model, value: { ...value, ...patch } })
   let jsonFailure: string | undefined
-  try { parseCustomBody(model.body) } catch (error) { jsonFailure = failureMessage(error) }
+  try { parseCustomBody(model.body) } catch (error) {
+    jsonFailure = describeUiError(error, '自定义请求体必须是 JSON 对象，请检查格式。').message
+  }
   const overrides = (Object.keys(modalityLabels) as Modality[]).flatMap(modality => {
     const override = value.modalities?.[modality]
     return override === 'force_enable' || override === 'force_disable'
@@ -152,7 +152,7 @@ function ModelEditor({ model, index, disabled, hidden, visible, issue, update, r
     h('span', { style: { display: 'grid', gap: '4px', flex: '1 1 auto', minWidth: 0 } },
       h('span', { style: { fontWeight: 600, overflowWrap: 'anywhere' } }, value.name?.trim() || value.id || '新模型'),
       value.name?.trim() ? h('span', { style: { ...small, fontFamily: 'monospace', overflowWrap: 'anywhere' } }, value.id || '请填写模型 ID') : null,
-      h('span', { style: small }, overrides.length === 0 ? '输入模态未设置' : overrides.join(' · '))),
+      overrides.length === 0 ? null : h('span', { style: small }, overrides.join(' · '))),
     jsonFailure === undefined && issue === undefined ? null : h('span', { style: { ...badgeStyle,
       color: 'var(--dsw-alias-state-error-primary, #b91c1c)' } }, issue === undefined ? 'JSON 待修正' : '待修正')),
   h('fieldset', { disabled, style: { ...stack, margin: 0, padding: '14px', minWidth: 0, border: 0,
@@ -173,15 +173,18 @@ function ModelEditor({ model, index, disabled, hidden, visible, issue, update, r
       modelField('maxTokens', '输出上限（可选）', textInput('输出上限', value.maxTokens === undefined ? '' : String(value.maxTokens),
         text => change({ maxTokens: text === '' ? undefined : Number(text) }), disabled,
         { ...controlProps('maxTokens'), type: 'number', min: 1, step: 1, placeholder: '留空使用供应商默认值' }))),
+      // This budget affects only tool-result images/videos in the next request;
+      // originals remain untouched. Decimal MB matches the request budget logic.
       modelField('agentMediaFallbackMB', '智能体媒体续链预算（十进制 MB）', textInput(
         '智能体媒体续链预算',
         String(value.agentMediaFallbackMB ?? DEFAULT_AGENT_MEDIA_FALLBACK_MB),
         text => change({ agentMediaFallbackMB: text === '' ? undefined : Number(text) }),
         disabled,
         { ...controlProps('agentMediaFallbackMB'), type: 'number', min: 0, step: 'any' },
-      ), '仅作用于 tool-result 中的图片和视频。超额媒体只从本次模型请求省略，不删除原文件；AI 会收到诊断并自行决定下一步。0 表示关闭此降级。1 MB = 1,000,000 字节。'),
+      ), '超额工具媒体将从本次请求省略；0 表示关闭自动省略。'),
+      // An absent override stays undeclared; provider feedback must never fill it.
       h('div', { style: stack }, h('span', null, '输入模态'),
-        h('p', { style: small }, '未设置不声明模型能力，也不阻止你主动提交媒体；只有手动关闭才阻止发送。供应商反馈不会自动填写或修改。文本默认可用。'),
+        h('p', { style: small }, '未设置仍允许提交；手动关闭才阻止发送。'),
         h('div', { className: 'ark-model-fields' }, ...(Object.keys(modalityLabels) as Modality[]).map(modality =>
           field(modalityLabels[modality], h('select', {
             key: modality, style: inputStyle, 'aria-label': `${modalityLabels[modality]}输入`,
@@ -210,7 +213,7 @@ function ModelEditor({ model, index, disabled, hidden, visible, issue, update, r
         rows: 6, 'aria-label': '自定义请求体 JSON', 'aria-invalid': jsonFailure !== undefined,
         placeholder: '{"thinking":{"type":"enabled"}}', value: model.body, disabled,
         onChange: (event: { target: { value: string } }) => update({ ...model, body: event.target.value }),
-      }), '思考模式和供应商扩展参数在这里配置；原始模式需填写完整请求。'),
+      })),
       jsonFailure === undefined || issue?.field === 'customBody' ? null : h('p', { role: 'alert', style: small }, jsonFailure))),
   h('button', { type: 'button', disabled, style: { ...actionStyle, justifySelf: 'start' },
     onClick: remove, 'aria-label': `移除模型 ${value.id || index + 1}` }, `移除模型 ${index + 1}`)))
@@ -236,7 +239,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
   const [keyWritable, setKeyWritable] = useState(true)
   const [writable, setWritable] = useState(false)
   const [busy, setBusy] = useState(true)
-  const [failure, setFailure] = useState<string>()
+  const [failure, setFailure] = useState<UiError>()
   const [modelIssue, setModelIssue] = useState<ModelIssue>()
   const [saved, setSaved] = useState(false)
   const [reload, setReload] = useState(0)
@@ -277,7 +280,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
       setKeyConfigured(credential?.configured === true)
       setKeyWritable(credential?.writable !== false)
       setWritable(description.writable)
-    }).catch(error => { if (active) setFailure(failureMessage(error)) })
+    }).catch(error => { if (active) setFailure(describeUiError(error, '方舟配置加载失败，请重新载入。')) })
       .finally(() => {
         if (active) { inFlight.current = false; setBusy(false) }
       })
@@ -295,12 +298,13 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
     || `${model.value.id} ${model.value.name ?? ''}`.toLocaleLowerCase().includes(query)
   const visibleModels = activeModels.filter(matchesSearch)
   const cardName = route?.name?.trim() || provider.displayName
+  // Credential presence is not evidence of a successful provider connection.
   const status = route === undefined ? '正在载入…' : route.enabled === false ? '通道已停用'
-    : activeModels.length === 0 ? keyConfigured ? '未就绪：待添加模型' : '未就绪：待添加模型和密钥'
-      : modelIssue !== undefined ? '未就绪：模型配置待修正'
+    : activeModels.length === 0 ? keyConfigured ? '待添加模型' : '待添加模型和密钥'
+      : modelIssue !== undefined ? '模型配置待修正'
       : key.length > 0 ? '密钥待保存'
         : route.apiKeyEnv !== original?.apiKeyEnv ? '密钥引用待保存'
-          : !keyConfigured ? '未就绪：待配置密钥' : '已配置密钥 · 未测试连接'
+          : !keyConfigured ? '待配置密钥' : '密钥已配置'
   useEffect(() => {
     onStateChange?.(provider.provider, { name: cardName, modelCount: activeModels.length, dirty, busy, status })
   }, [onStateChange, provider.provider, cardName, activeModels.length, dirty, busy, status])
@@ -319,9 +323,11 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
     try {
       const issue = modelValidationIssue(activeModels.map(({ value, body }) => ({ ...value, customBody: body })))
       if (issue !== undefined) {
+        const message = describeUiError(new Error(issue.message), issue.field === 'customBody'
+          ? '自定义请求体必须是 JSON 对象，请检查格式。' : '请检查此模型的配置。').message
         setSearch('')
-        setModelIssue({ draftId: activeModels[issue.index]!.draftId, field: issue.field, message: issue.message })
-        throw new Error(issue.message)
+        setModelIssue({ draftId: activeModels[issue.index]!.draftId, field: issue.field, message })
+        throw new Error(message)
       }
       const nextModels = modelValues(activeModels)
       // A click owns the whole transaction. Leaving this card only detaches its
@@ -344,7 +350,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
       setKeyWritable(result.credential?.writable !== false)
       setSaved(true)
     } catch (error) {
-      if (mounted.current) setFailure(failureMessage(error))
+      if (mounted.current) setFailure(describeUiError(error, '配置未保存，请保留当前页面并重试。'))
     } finally {
       if (mounted.current) { inFlight.current = false; setBusy(false) }
     }
@@ -356,21 +362,20 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
         background: 'var(--dsw-alias-bg-module-platform, Canvas)' } : {}) } },
     h('style', null, cardStyles),
     h('header', { style: rowStyle },
-      h('div', { style: { display: 'grid', gap: '5px', minWidth: 0, flex: '1 1 200px' } },
-        showHeader ? h('h3', { style: { fontSize: '16px', lineHeight: 1.4, margin: 0 } }, cardName) : null,
-        route === undefined ? null : h('p', { style: { ...small, fontFamily: 'monospace', overflowWrap: 'anywhere' } },
-          route.baseURL ?? DEFAULT_ROUTES[route.kind].baseUrl)),
+      showHeader ? h('h3', { style: { fontSize: '16px', lineHeight: 1.4, margin: 0, minWidth: 0,
+        overflowWrap: 'anywhere' } }, cardName) : null,
       route === undefined ? null : h('span', { style: badgeStyle }, status)),
     route === undefined ? h('p', { style: small }, busy ? '正在载入方舟配置…' : '配置尚未载入。') : h('div', { style: stack },
       h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
         h('input', { type: 'checkbox', checked: route.enabled !== false, disabled,
           onChange: (event: { target: { checked: boolean } }) => edit({ enabled: event.target.checked }) }),
         '启用此通道'),
+      // New keys use independent staged references, preserving credentials shared
+      // by other routes. The form exposes the user's choice, not that transaction.
       field('API Key', textInput('API Key', key, value => { setKey(value); setSaved(false) }, disabled,
         { type: 'password', autoComplete: 'off', spellCheck: false,
           placeholder: keyConfigured ? '已配置；留空保留现有密钥' : '粘贴本通道的 API Key' }),
-        keyWritable ? '填写新密钥会为此通道创建独立凭据引用；留空保留现有密钥。'
-          : '当前密钥由运行环境提供；填写新密钥会为此通道创建独立凭据引用。'),
+        keyWritable ? undefined : '当前密钥来自运行环境；留空保留。'),
       h('details', null, h('summary', { style: { cursor: 'pointer' } }, '通道高级配置'),
         h('div', { style: { ...stack, marginTop: '12px' } },
           field('通道显示名称', textInput('通道显示名称', route.name ?? '',
@@ -378,7 +383,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
           field('API 地址', textInput('API 地址', route.baseURL ?? DEFAULT_ROUTES[route.kind].baseUrl,
             baseURL => edit({ baseURL }), disabled, { type: 'url' })),
           field('密钥引用名称', textInput('密钥引用名称', route.apiKeyEnv ?? DEFAULT_ROUTES[route.kind].apiKeyEnv,
-            apiKeyEnv => edit({ apiKeyEnv }), disabled), '使用已有环境变量或凭据引用时，请留空 API Key。新密钥将创建独立引用，不能同时指定另一个引用。'))),
+            apiKeyEnv => edit({ apiKeyEnv }), disabled), '使用已有引用时，请留空 API Key。'))),
       h('div', { style: { ...stack, borderTop: '1px solid var(--dsw-alias-border-l2, #cbd5e1)', paddingTop: '16px' } },
         h('div', { style: rowStyle },
           h('h4', { style: { margin: 0, fontSize: '14px' } }, '模型 ', h('span', { style: badgeStyle }, String(activeModels.length))),
@@ -391,7 +396,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
           { type: 'search', placeholder: '搜索模型 ID 或显示名称' }) : null,
         activeModels.length === 0 ? h('p', { style: { ...small, padding: '14px',
           border: '1px dashed var(--dsw-alias-border-l3, #cbd5e1)', borderRadius: '10px' } },
-        '尚未添加模型。可以先保存通道配置，稍后点击“添加模型”填写模型 ID。') : null,
+        '尚未添加模型；可以先保存通道。') : null,
         activeModels.length > 0 && visibleModels.length === 0 ? h('p', { style: small }, '没有匹配的模型，请换个关键词。') : null,
         h('div', { style: { display: 'grid', gap: '8px', minWidth: 0 } }, ...models.map(model => h(ModelEditor, {
           key: model.draftId, model, index: Math.max(0, activeModels.indexOf(model)), disabled, visible,
@@ -416,7 +421,7 @@ function VolcengineCardForm({ provider, operations, showHeader = false, visible 
               } }, '撤销移除')))))),
     h('footer', { style: { ...stack, gap: '8px', position: 'sticky', bottom: 0, zIndex: 1, padding: '12px 0',
       borderTop: '1px solid var(--dsw-alias-border-l2, #cbd5e1)', background: 'var(--dsw-alias-bg-module-platform, Canvas)' } },
-    failure === undefined ? null : h('p', { role: 'alert', style: { margin: 0 } }, failure),
+    failure === undefined ? null : h(ErrorNotice, { error: failure }),
     saved ? h('p', { role: 'status', style: { margin: 0 } }, activeModels.length === 0
       ? keyConfigured ? '通道已保存；添加模型后即可用于对话。' : '通道已保存；添加模型并配置密钥后即可用于对话。'
       : '已保存，后续请求使用新配置。') : null,

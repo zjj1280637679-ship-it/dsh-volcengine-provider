@@ -118,7 +118,16 @@ function confirmationKey(sessionId: string, messageId: string): string {
 }
 
 function fallbackDiagnostic(code: NativeMediaFallbackCode): string {
-  return `[VOLCENGINE_MEDIA_OMITTED code=${code}]`
+  const reasons: Record<NativeMediaFallbackCode, string> = {
+    BUNDLE_UNAVAILABLE: '附件已失效',
+    DUPLICATE_REFERENCE: '附件重复',
+    MEDIA_UNAVAILABLE: '无法读取附件',
+    MALFORMED_REFERENCE: '附件位置或引用无效',
+    ROUTE_CHANGED: '所选模型已改变',
+    ROUTE_UNAVAILABLE: '方舟模型不可用',
+    UNTRUSTED_SOURCE: '附件不属于当前输入',
+  }
+  return `[本条附件未发送：${reasons[code]}。请重新添加。]`
 }
 
 function markerIds(message: UserMessage): string[] {
@@ -250,6 +259,15 @@ export class NativeMediaMessageMerger {
     readonly isOwnedProvider: (provider: string) => boolean,
   ) {}
 
+  private fallback(message: UserMessage, code: NativeMediaFallbackCode): UserMessage {
+    try {
+      this.ctx.logger.warn(`dsh-volcengine-provider: native media omitted (${code})`)
+    } catch {
+      // A diagnostic sink failure must not block an already accepted message.
+    }
+    return fallbackMessage(message, code)
+  }
+
   private remember(
     sessionId: string,
     messageId: string,
@@ -307,7 +325,7 @@ export class NativeMediaMessageMerger {
     const messageId = String(message.id)
     const fail = (code: NativeMediaFallbackCode): UserMessage => {
       this.cleanupAfterFallback(sessionId, messageId, bundleIds)
-      return fallbackMessage(message, code)
+      return this.fallback(message, code)
     }
 
     if (message.source.kind !== 'user') return fail('UNTRUSTED_SOURCE')
@@ -390,7 +408,7 @@ export class NativeMediaMessageMerger {
         // preserve the already accepted message text.
         merged.push(markerIds(message).length === 0
           ? message
-          : fallbackMessage(message, 'MEDIA_UNAVAILABLE'))
+          : this.fallback(message, 'MEDIA_UNAVAILABLE'))
       }
     }
     return merged

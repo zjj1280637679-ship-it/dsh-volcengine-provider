@@ -180,7 +180,9 @@ describe('native composer media merge', () => {
 
       const rejected = (await merger.merge(agent(), [competing], new AbortController().signal))[0]!
       await merger.whenConfirmationsIdle()
-      expect(textOf(rejected)).toContain('VOLCENGINE_MEDIA_OMITTED')
+      expect(textOf(rejected)).toContain('本条附件未发送：')
+      expect(textOf(rejected)).toContain('请重新添加。')
+      expect(textOf(rejected)).not.toContain('VOLCENGINE_MEDIA_OMITTED')
       expect(textOf(rejected)).toContain('other question')
       expect(await staging.status(SESSION, FIRST)).toMatchObject({ state: 'claimed', messageId: original.id })
       const materialized = await staging.materialize(SESSION, FIRST, original.id, PROVIDER, MODEL)
@@ -247,7 +249,7 @@ describe('native composer media merge', () => {
       agent(), [duplicate], new AbortController().signal,
     ))[0]!
     expect(textOf(duplicateResult)).toContain(' keep this question')
-    expect(textOf(duplicateResult)).toContain('[VOLCENGINE_MEDIA_OMITTED code=DUPLICATE_REFERENCE]')
+    expect(textOf(duplicateResult)).toBe('[本条附件未发送：附件重复。请重新添加。]  keep this question')
     expect(JSON.stringify(duplicateResult)).not.toContain(marker)
     expect(staging.status).not.toHaveBeenCalled()
 
@@ -257,7 +259,7 @@ describe('native composer media merge', () => {
       agent(), [unavailable], new AbortController().signal,
     ))[0]!
     expect(textOf(unavailableResult)).toContain(' question remains')
-    expect(textOf(unavailableResult)).toContain('[VOLCENGINE_MEDIA_OMITTED code=BUNDLE_UNAVAILABLE]')
+    expect(textOf(unavailableResult)).toBe('[本条附件未发送：附件已失效。请重新添加。] question remains')
     expect(JSON.stringify(unavailableResult)).not.toContain('__dsh_volc_media_v1_')
     expect(staging.claimMany).not.toHaveBeenCalled()
   })
@@ -275,14 +277,43 @@ describe('native composer media merge', () => {
 
     expect(textOf(result)).toContain('ordinary text before ')
     expect(textOf(result)).toContain(' remains')
-    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=MALFORMED_REFERENCE]')
+    expect(textOf(result)).toBe('ordinary text before [本条附件未发送：附件位置或引用无效。请重新添加。] remains')
     expect(JSON.stringify(result)).not.toContain(marker)
     expect(staging.status).not.toHaveBeenCalled()
     expect(staging.claimMany).not.toHaveBeenCalled()
   })
 
+  it('preserves accepted content when the route and diagnostic sink are unavailable', async () => {
+    const ctx = context()
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => { throw new Error('logger unavailable') })
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, provider => provider === PROVIDER)
+    const unchanged = { type: 'text' as const, text: '\n第二段\t原文' }
+    const message = createUserMessage({
+      content: [{ type: 'text', text: `\t${formatNativeMediaMarker(FIRST)}\n  原文\t` }, unchanged],
+      source: { kind: 'user' },
+    })
+
+    const result = (await merger.merge(
+      agent(() => ({ provider: 'another-provider', model: MODEL })),
+      [message], new AbortController().signal,
+    ))[0]!
+
+    expect(result.id).toBe(message.id)
+    expect(result.source).toEqual(message.source)
+    expect(result.content).toEqual([
+      { type: 'text', text: '\t[本条附件未发送：方舟模型不可用。请重新添加。]\n  原文\t' },
+      unchanged,
+    ])
+    expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-volcengine-provider: native media omitted (ROUTE_UNAVAILABLE)')
+    expect(staging.status).not.toHaveBeenCalled()
+    await merger.whenConfirmationsIdle()
+    expect(staging.discard).toHaveBeenCalledWith(SESSION, FIRST, expect.any(AbortSignal))
+  })
+
   it('contains materialization errors and never exposes their paths, bytes, or marker', async () => {
     const ctx = context()
+    const warn = vi.spyOn(ctx.logger, 'warn')
     const staging = stagingFixture()
     vi.mocked(staging.materialize).mockRejectedValueOnce(
       new Error('C:\\private\\movie.mp4 secret-provider-byte-sequence'),
@@ -293,7 +324,9 @@ describe('native composer media merge', () => {
     const result = (await merger.merge(agent(), [message], new AbortController().signal))[0]!
 
     expect(textOf(result)).toContain(' keep this accepted text')
-    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=MEDIA_UNAVAILABLE]')
+    expect(textOf(result)).toContain('[本条附件未发送：无法读取附件。请重新添加。]')
+    expect(warn).toHaveBeenCalledWith('dsh-volcengine-provider: native media omitted (MEDIA_UNAVAILABLE)')
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private|secret-provider|byte-sequence|__dsh_volc/u)
     expect(JSON.stringify(result)).not.toMatch(/private|secret-provider|byte-sequence|__dsh_volc/u)
     expect(staging.discardClaim).toHaveBeenCalledWith(
       SESSION, FIRST, String(message.id), expect.any(AbortSignal),
@@ -320,7 +353,7 @@ describe('native composer media merge', () => {
       new AbortController().signal,
     ))[0]!
 
-    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=ROUTE_CHANGED]')
+    expect(textOf(result)).toContain('[本条附件未发送：所选模型已改变。请重新添加。]')
     expect(textOf(result)).toContain(' explain this please')
     expect(result.content.some(block => block.type.startsWith('volcengine-'))).toBe(false)
     expect(staging.discardClaim).toHaveBeenCalledWith(
@@ -347,7 +380,7 @@ describe('native composer media merge', () => {
       agent(), [message], new AbortController().signal,
     ))[0]!
 
-    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=BUNDLE_UNAVAILABLE]')
+    expect(textOf(result)).toContain('[本条附件未发送：附件已失效。请重新添加。]')
     expect(textOf(result)).toContain(' keep text moving')
     await vi.advanceTimersByTimeAsync(2_000)
     await merger.whenConfirmationsIdle()
@@ -367,7 +400,7 @@ describe('native composer media merge', () => {
 
     expect(textOf(result)).toContain('plugin text ')
     expect(textOf(result)).toContain(' survives')
-    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=UNTRUSTED_SOURCE]')
+    expect(textOf(result)).toContain('[本条附件未发送：附件不属于当前输入。请重新添加。]')
     expect(JSON.stringify(result)).not.toContain(marker)
     expect(staging.status).not.toHaveBeenCalled()
     expect(staging.claimMany).not.toHaveBeenCalled()

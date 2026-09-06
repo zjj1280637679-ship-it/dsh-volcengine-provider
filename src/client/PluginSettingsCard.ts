@@ -5,6 +5,8 @@ import type { RouteKind } from '../routes.js'
 import { VolcengineCard } from './Card.js'
 import type { ProviderCardDescriptor, ProviderCardState } from './Card.js'
 import type { CardOperations, SettingsDescribeValue } from './operations.js'
+import { describeUiError, ErrorNotice } from './ui-feedback.js'
+import type { UiError } from './ui-feedback.js'
 
 export interface VolcenginePluginSettingsCardProps {
   operations: CardOperations
@@ -47,7 +49,7 @@ export function VolcenginePluginSettingsCard(
   { operations }: VolcenginePluginSettingsCardProps,
 ): ReactNode {
   const [providers, setProviders] = useState<ProviderCardDescriptor[]>()
-  const [failure, setFailure] = useState<string>()
+  const [failure, setFailure] = useState<UiError>()
   const [reload, setReload] = useState(0)
   const [selected, setSelected] = useState<string>()
   const [states, setStates] = useState<Record<string, ProviderCardState>>({})
@@ -62,13 +64,13 @@ export function VolcenginePluginSettingsCard(
     void operations.read().then(description => {
       if (active) setProviders(pluginSettingsProviders(description))
     }).catch(error => {
-      if (active) setFailure(error instanceof Error ? error.message : '方舟配置加载失败，请重试。')
+      if (active) setFailure(describeUiError(error, '方舟配置加载失败，请重试。'))
     })
     return () => { active = false }
   }, [operations, reload])
 
   if (failure !== undefined) return h('div', null,
-    h('p', { role: 'alert' }, failure),
+    h(ErrorNotice, { error: failure }),
     h('button', { type: 'button', onClick: () => setReload(current => current + 1) }, '重新加载方舟配置'))
   if (providers === undefined) return h('p', null, '正在加载方舟配置…')
   if (providers.length === 0) return h('p', null, '当前没有可配置的方舟通道。')

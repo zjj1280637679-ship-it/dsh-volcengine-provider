@@ -115,6 +115,7 @@ describe('Volcengine Models card', () => {
     expect(rows.every(row => !row.open)).toBe(true)
     expect(rows[0].querySelector('summary')?.textContent).toContain('主模型')
     expect(rows[0].querySelector('summary')?.textContent).toContain('seed-one')
+    expect(rows[0].querySelector('summary')?.textContent).not.toContain('输入模态未设置')
     expect(rows[1].querySelector('summary')?.textContent).toContain('视频：强制关闭')
     const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存方舟配置')!
     expect(save.disabled).toBe(true)
@@ -252,7 +253,7 @@ describe('Volcengine Models card', () => {
     expect(fixture.readView().value).toMatchObject({ routes: { standard: {
       name: '稍后配置模型的通道', enabled: true, models: [], apiKeyEnv: 'ARK_STANDARD_API_KEY',
     } } })
-    expect(container.textContent).toContain('未就绪：待添加模型和密钥')
+    expect(container.textContent).toContain('待添加模型和密钥')
     expect(container.querySelector('[role="status"]')?.textContent).toContain('添加模型并配置密钥')
     expect(fixture.saveCredential).not.toHaveBeenCalled()
     expect(container.querySelector('[role="alert"]')).toBeNull()
@@ -320,6 +321,30 @@ describe('Volcengine Models card', () => {
     expect(fixture.saveCredential).toHaveBeenCalledTimes(2)
     expect(input('API Key').value).toBe('')
     expect(container.textContent).toContain('已保存')
+  })
+
+  it('keeps raw save errors out of the form until requested and preserves the draft', async () => {
+    const fixture = setup()
+    fixture.saveCredential.mockRejectedValueOnce(new Error(JSON.stringify({
+      code: 'InvalidParameter', issues: [{ path: ['routes', 'standard'], message: 'opaque-server-error' }],
+    })))
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    await change('API Key', 'temporary-test-key')
+    await change('模型 ID', 'unsaved-model')
+    await click('保存方舟配置')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('配置未保存，请保留当前页面并重试。')
+    expect(container.textContent).not.toContain('opaque-server-error')
+    expect(input('模型 ID').value).toBe('unsaved-model')
+    expect(input('API Key').value).toBe('temporary-test-key')
+    const details = [...container.querySelectorAll('details')]
+      .find(item => item.querySelector('summary')?.textContent === '错误详情')!
+    expect(details.open).toBe(false)
+    await act(async () => details.querySelector('summary')!.click())
+    expect(details.open).toBe(true)
+    expect(details.textContent).toContain('opaque-server-error')
+    await act(async () => details.querySelector('summary')!.click())
+    expect(container.textContent).not.toContain('opaque-server-error')
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
   })
 
   it('admits only one save for two activations in the same React batch', async () => {
@@ -458,15 +483,36 @@ describe('Volcengine Models card', () => {
     const fixture = setup()
     await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
     expect(input('智能体媒体续链预算').value).toBe('45')
-    expect(container.textContent).toContain('仅作用于 tool-result 中的图片和视频')
-    expect(container.textContent).toContain('只从本次模型请求省略，不删除原文件')
-    expect(container.textContent).toContain('0 表示关闭此降级')
+    expect(container.textContent).toContain('0 表示关闭自动省略')
+    expect(container.textContent).toContain('未设置仍允许提交；手动关闭才阻止发送')
     await change('API Key', 'temporary-test-key')
     await change('智能体媒体续链预算', '12.5')
+    expect(input('自定义请求体模式').textContent).toContain('补丁（null 删除字段）')
+    expect(input('自定义请求体模式').textContent).toContain('原始请求体（完整替换）')
     await click('保存方舟配置')
     expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'my-model', futureModelOption: { keep: true }, agentMediaFallbackMB: 12.5,
     }] }])
+  })
+
+  it('excludes implementation explanations while retaining editable API and credential fields', async () => {
+    const fixture = setup()
+    vi.mocked(fixture.operations.describeCredential).mockResolvedValue({ configured: true, writable: false })
+    await act(async () => root.render(createElement(VolcengineCard, { ...fixture.props, showHeader: true })))
+    expect(container.querySelector('header')!.textContent).toContain('密钥已配置')
+    expect(container.querySelector('header')!.textContent).not.toContain('https://')
+    expect(input('API 地址').value).toBe('https://ark.cn-beijing.volces.com/api/v3')
+    expect(container.textContent).toContain('当前密钥来自运行环境；留空保留。')
+    await change('密钥引用名称', 'USER_KEY_REF')
+    await change('自定义请求体 JSON', '{"thinking":{"type":"enabled"}}')
+    const text = container.textContent!
+    for (const explanation of ['配置说明', '密钥说明', '独立凭据引用', '供应商反馈', '模型会收到省略提示', '不代表已测试连接']) {
+      expect(text).not.toContain(explanation)
+    }
+    expect(input('密钥引用名称').value).toBe('USER_KEY_REF')
+    expect(input('自定义请求体 JSON').value).toBe('{"thinking":{"type":"enabled"}}')
+    expect(input('视频输入').value).toBe('inherit')
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
   })
 
   it('preserves already stored inherit fields when the user does not edit them', async () => {

@@ -1,9 +1,10 @@
-import { createElement as h, useEffect, useId, useRef, useSyncExternalStore } from 'react'
+import { createElement as h, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
 import { ARK_CHAT_MEDIA_ACCEPT } from '../media-file-types.js'
-import type { NativeMediaDraftBundle, NativeMediaDraftFile, NativeMediaDraftOperations } from './native-media-upload.js'
+import type { NativeMediaDraftBundle, NativeMediaDraftOperations } from './native-media-upload.js'
 import type { MediaDirectoryState } from './media-operations.js'
+import { describeUiError, ErrorNotice, type UiError } from './ui-feedback.js'
 
 export interface MediaPlusProps {
   readonly operations: NativeMediaDraftOperations
@@ -40,7 +41,10 @@ function canAddMedia(selection: MediaDirectoryState): boolean {
 }
 
 function targetLabel(bundle: NativeMediaDraftBundle): string {
-  return `${bundle.expected.provider} / ${bundle.expected.model}`
+  const routes: Record<string, string> = {
+    'volcengine-standard': '普通 API', 'volcengine-agent-plan': 'Agent Plan', 'volcengine-coding-plan': 'Coding Plan',
+  }
+  return `${routes[bundle.expected.provider] ?? bundle.expected.provider} / ${bundle.expected.model}`
 }
 
 function formatBytes(bytes: number): string {
@@ -49,25 +53,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function fileStatus(file: NativeMediaDraftFile, bundle: NativeMediaDraftBundle): string {
-  if (bundle.state === 'ready') return '已就绪'
-  if (file.uploadedBytes === file.bytes) return bundle.state === 'uploading' ? '已上传，等待整组就绪' : '已上传，整组未就绪'
-  if (bundle.state === 'cancelled') return '已取消'
-  if (bundle.state === 'failed') return file.uploadedBytes > 0 ? '上传中断' : '未上传'
-  return file.uploadedBytes > 0 ? '上传中' : '等待上传'
-}
-
 /** One compact picker beside Harness's resident plus; native composer owns the text and send action. */
 export function MediaPlus({ operations, session, input }: MediaPlusProps): ReactNode {
   const picker = useRef<HTMLInputElement>(null)
   const statusId = useId()
+  const [failure, setFailure] = useState<UiError>()
   const uploadState = useSyncExternalStore(operations.state.subscribe, operations.state.getSnapshot)
   const selection = useSyncExternalStore(operations.selection.subscribe, operations.selection.getSnapshot)
   useEffect(() => {
     if (session.removed || session.subagent !== null) return
     let active = true
+    setFailure(undefined)
     void operations.load().catch(error => {
-      if (active) operations.notify('error', error instanceof Error ? error.message : '方舟媒体状态暂时无法加载。')
+      if (active) setFailure(describeUiError(error, '附件状态暂时无法加载，请重新打开会话。'))
     })
     return () => { active = false }
   }, [operations, session.removed, session.subagent])
@@ -79,7 +77,7 @@ export function MediaPlus({ operations, session, input }: MediaPlusProps): React
       : input.phase !== 'plain' ? '请先完成或取消当前输入操作'
         : !eligible ? selected
           : `${uploadState.uploads > 0 ? '方舟媒体正在上传，点击可继续添加' : '添加方舟媒体附件'} · ${selected}`
-  return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
+  return h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', minWidth: 0 } },
     h('input', {
       ref: picker,
       type: 'file',
@@ -91,9 +89,9 @@ export function MediaPlus({ operations, session, input }: MediaPlusProps): React
       onChange: (event: { target: HTMLInputElement }) => {
         const files = Array.from(event.target.files ?? [])
         event.target.value = ''
-        void operations.addFiles(files).catch(error => operations.notify(
-          'error', error instanceof Error ? error.message : '方舟媒体附件未添加。',
-        ))
+        if (files.length === 0) return
+        setFailure(undefined)
+        void operations.addFiles(files).catch(error => setFailure(describeUiError(error, '附件未添加，请检查文件后重试。')))
       },
     }),
     h('button', {
@@ -106,34 +104,28 @@ export function MediaPlus({ operations, session, input }: MediaPlusProps): React
       title,
       onClick: () => picker.current?.click(),
     }, '+'),
-    h('span', { id: statusId, role: 'status', 'aria-live': 'polite', title: selected,
-      style: { ...secondary, display: 'grid', maxWidth: '120px', minWidth: 0, lineHeight: 1.2 } },
-    h('span', null, uploadState.uploads > 0 ? `方舟媒体 · ${uploadState.uploads} 组上传中` : '方舟媒体'),
-    h('span', { style: { fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.8 } },
-      eligible ? selection.current!.model : '先选择方舟模型')))
+    h('span', { id: statusId, role: 'status', 'aria-live': 'polite',
+      style: { position: 'absolute', width: 1, height: 1, padding: 0, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' } },
+      uploadState.uploads > 0 ? `${uploadState.uploads} 组上传中` : ''),
+    failure === undefined ? null : h(ErrorNotice, { error: failure }))
 }
 
-/** Full-width public dock; the native attachment area and submit action stay owned by Harness. */
+/** Native chips own ready attachments. This dock only supplies transient progress and actionable failures. */
 export function MediaAttachments({ operations, session, input }: MediaPlusProps): ReactNode {
   const state = useSyncExternalStore(operations.state.subscribe, operations.state.getSnapshot)
   const selection = useSyncExternalStore(operations.selection.subscribe, operations.selection.getSnapshot)
-  if (state.bundles.length === 0 || session.removed || session.subagent !== null) return null
-  const hasProblem = state.bundles.some(bundle => bundle.state === 'failed' || bundle.state === 'cancelled'
+  const pending = state.bundles.filter(bundle => bundle.state !== 'ready'
     || bundle.expected.provider !== selection.current?.provider || bundle.expected.model !== selection.current?.model)
-  const status = hasProblem ? '需要处理' : state.uploads > 0 ? `${state.uploads} 组上传中` : '上传完成'
-  return h('details', {
-    style: { border: '1px solid var(--dsw-alias-border-l2, #8886)', borderRadius: '10px',
-      padding: '8px 10px', minWidth: 0, width: '100%', boxSizing: 'border-box', fontSize: '13px', color: 'inherit' },
-  },
-  h('summary', { style: { cursor: 'pointer', overflowWrap: 'anywhere' } },
-    `方舟媒体 · ${state.bundles.length} 组 · ${status}`),
-  h('div', { style: { display: 'grid', gap: '12px', marginTop: '10px', maxHeight: 'min(40vh, 320px)', overflowY: 'auto' } },
-    ...state.bundles.map(bundle => {
+  if (pending.length === 0 || session.removed || session.subagent !== null) return null
+  return h('div', { 'aria-label': '附件状态',
+    style: { display: 'grid', gap: '8px', minWidth: 0, width: '100%', maxHeight: '160px', overflowY: 'auto' } },
+    ...pending.map(bundle => {
       const mismatch = bundle.expected.provider !== selection.current?.provider || bundle.expected.model !== selection.current?.model
-      const label = bundle.state === 'uploading' ? '上传中' : bundle.state === 'ready' ? '上传完成'
+      const label = bundle.state === 'uploading' ? '上传中' : bundle.state === 'ready' ? '模型已改变'
         : bundle.state === 'cancelled' ? '已取消' : '上传失败'
       return h('section', { key: bundle.bundleId, 'aria-label': `方舟附件组：${bundle.label}`,
-        style: { display: 'grid', gap: '6px', minWidth: 0 } },
+        style: { display: 'grid', gap: '6px', minWidth: 0, padding: '8px 10px',
+          border: '1px solid var(--dsw-alias-border-l2, #8886)', borderRadius: '8px', fontSize: '12px' } },
       h('div', { style: { display: 'flex', alignItems: 'start', gap: '8px', flexWrap: 'wrap' } },
         h('strong', { style: { flex: '1 1 160px', overflowWrap: 'anywhere' } }, bundle.label),
         h('span', { style: secondary }, label),
@@ -141,24 +133,19 @@ export function MediaAttachments({ operations, session, input }: MediaPlusProps)
           type: 'button', style: action, disabled: input.phase !== 'plain',
           'aria-label': `取消整组上传：${bundle.label}`,
           onClick: () => operations.cancelUpload(bundle.bundleId),
-        }, '取消整组上传') : null),
-      h('div', { style: { ...secondary, overflowWrap: 'anywhere' } }, `绑定模型：${targetLabel(bundle)}`),
+        }, '取消上传') : null),
       mismatch ? h('div', { role: 'alert', style: { ...secondary, color: 'var(--dsw-alias-state-warn-label, #9b6400)' } },
-        '当前模型与附件不一致。请切回绑定模型；如要改用当前模型，请删除对应 Ark 引用后重新添加。') : null,
-      bundle.error === undefined ? null : h('div', { role: 'alert', style: { ...secondary, overflowWrap: 'anywhere' } }, bundle.error),
-      bundle.files === undefined ? h('div', { style: secondary },
-        '已恢复附件引用；本次会话无法读取逐文件明细。')
-        : h('ul', { style: { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '8px' } },
+        `附件属于 ${targetLabel(bundle)}。请切回该模型，或移除后重新添加。`) : null,
+      bundle.error === undefined ? null : h(ErrorNotice, {
+        error: describeUiError(bundle.error, '上传失败，请移除对应附件后重新添加。'),
+      }),
+      bundle.state !== 'uploading' || bundle.files === undefined ? null
+        : h('ul', { style: { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '6px' } },
           ...bundle.files.map((file, index) => h('li', { key: index, style: { display: 'grid', gap: '3px', minWidth: 0 } },
-            h('div', { style: { overflowWrap: 'anywhere' } }, file.name),
-            h('div', { style: secondary },
-              `${{ image: '图片', video: '视频', audio: '音频' }[file.modality]} · ${file.mediaType} · ${formatBytes(file.bytes)} · ${fileStatus(file, bundle)}`),
-            bundle.state === 'ready' ? null : h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+            bundle.files!.length > 1 ? h('div', { style: { overflowWrap: 'anywhere' } }, file.name) : null,
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
               h('progress', { max: file.bytes, value: file.uploadedBytes,
                 'aria-label': `${file.name} 上传进度`, style: { flex: '1 1 100px', minWidth: 0, height: '6px' } }),
-              h('span', { style: secondary }, `${formatBytes(file.uploadedBytes)} / ${formatBytes(file.bytes)}`))))),
-      h('div', { style: secondary }, bundle.state === 'failed' || bundle.state === 'cancelled'
-        ? '请删除输入框中对应的 Ark 引用，再重新选择这一组文件。'
-        : '请将 Ark 引用保留在输入框开头；删除输入框中的该引用会移除整组。'))
-    })))
+              h('span', { style: secondary }, `${formatBytes(file.uploadedBytes)} / ${formatBytes(file.bytes)}`))))))
+    }))
 }

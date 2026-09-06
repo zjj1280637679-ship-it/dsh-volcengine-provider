@@ -80,9 +80,10 @@ it('selects one route at a time while preserving hidden drafts, expanded models 
     expect([...container.querySelectorAll('h3')].map(node => node.textContent)).toEqual([
       '火山方舟 · 普通 API', '火山方舟 · Agent Plan', '火山方舟 · Coding Plan',
     ])
-    expect(cards[0].textContent).toContain('https://ark.cn-beijing.volces.com/api/v3')
-    expect(cards[1].textContent).toContain('https://ark.cn-beijing.volces.com/api/plan/v3')
-    expect(cards[2].textContent).toContain('https://ark.cn-beijing.volces.com/api/coding/v3')
+    expect(cards.map(card => card.querySelector<HTMLInputElement>('[aria-label="API 地址"]')!.value)).toEqual([
+      'https://ark.cn-beijing.volces.com/api/v3', 'https://ark.cn-beijing.volces.com/api/plan/v3',
+      'https://ark.cn-beijing.volces.com/api/coding/v3',
+    ])
     for (const [index, id] of ['standard-edited', 'agent-edited'].entries()) {
       await act(async () => choices[index]!.click())
       expect(panels.filter(panel => !panel.hidden)).toEqual([panels[index]])
@@ -119,19 +120,25 @@ it('selects one route at a time while preserving hidden drafts, expanded models 
   }
 })
 
-it('provides a retry after the outer Plugins card fails to load', async () => {
+it('keeps load diagnostics behind disclosure and provides a retry on the outer Plugins card', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const container = document.createElement('div')
   const root = createRoot(container)
   const operations: CardOperations = {
-    read: vi.fn().mockRejectedValueOnce(new Error('连接暂时中断'))
+    read: vi.fn().mockRejectedValueOnce(new Error('{"code":"Unavailable","internal_path":"settings.read"}'))
       .mockResolvedValue(description({ 'coding-plan': { kind: 'coding-plan', models: [] } })),
     describeCredential: async () => undefined,
     saveSettings: vi.fn(), saveCredential: vi.fn(),
   }
   try {
     await act(async () => root.render(createElement(VolcenginePluginSettingsCard, { operations })))
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('连接暂时中断')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('方舟配置加载失败，请重试。')
+    expect(container.textContent).not.toContain('internal_path')
+    const details = container.querySelector('details')!
+    expect(details.open).toBe(false)
+    await act(async () => details.querySelector('summary')!.click())
+    expect(details.open).toBe(true)
+    expect(details.textContent).toContain('internal_path')
     await act(async () => container.querySelector('button')!.click())
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(container.querySelector('h3')?.textContent).toBe('火山方舟 · Coding Plan')

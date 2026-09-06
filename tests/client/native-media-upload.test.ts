@@ -204,14 +204,14 @@ describe('native Ark media input side path', () => {
     const marker = formatNativeMediaMarker(BUNDLE)
     await expect(fixture.source.matchEnter(
       { sessionId: SESSION }, `${marker} ${marker} question`, new AbortController().signal, { images: 0 },
-    )).rejects.toThrow(/twice/u)
+    )).rejects.toThrow(/附件重复/u)
     fixture.select('another-model')
     await expect(fixture.source.matchEnter(
       { sessionId: SESSION }, `${marker} question`, new AbortController().signal, { images: 0 },
-    )).rejects.toThrow(/different model/u)
+    )).rejects.toThrow(/不属于当前模型/u)
     await expect(fixture.source.matchEnter(
       { sessionId: SESSION }, `${marker}, question`, new AbortController().signal, { images: 0 },
-    )).rejects.toThrow(/malformed/u)
+    )).rejects.toThrow(/附件位置无效/u)
   })
 
   it('rehydrates a persisted canonical marker into a chip after refresh', async () => {
@@ -269,8 +269,8 @@ describe('native Ark media input side path', () => {
     await flush()
     expect(fixture.sessionInput.state.getSnapshot().draft).toContain('keep this text')
     expect(fixture.sessionInput.state.getSnapshot().occurrences).toHaveLength(1)
-    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/disk unavailable/u)
-    expect(fixture.sessionInput.notify).toHaveBeenCalledWith('error', 'disk unavailable')
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/附件未就绪/u)
+    expect(fixture.sessionInput.notify).not.toHaveBeenCalled()
     expect(fixture.bridge.operations(SESSION).state.getSnapshot()).toMatchObject({
       uploads: 0,
       bundles: [{ state: 'failed', error: 'disk unavailable', files: [{ uploadedBytes: 0 }] }],
@@ -390,7 +390,7 @@ describe('native Ark media input side path', () => {
     await vi.waitFor(() => expect(release).toBeDefined())
     fixture.select('changed-model')
     release()
-    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/selected model changed/u)
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/连接或模型已改变/u)
     expect(operations.state.getSnapshot()).toMatchObject({
       uploads: 0, bundles: [{ state: 'failed', files: [{ uploadedBytes: 2 }] }],
     })
@@ -406,7 +406,7 @@ describe('native Ark media input side path', () => {
       : await originalRpc(channel, endpoint, payload, signal))
     const operations = fixture.bridge.operations(SESSION)
     await operations.addFiles([new File(['ab'], 'clip.mp4', { type: 'video/mp4' })])
-    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/did not confirm/u)
+    await expect(fixture.source.codec.serialize(BUNDLE, new AbortController().signal)).rejects.toThrow(/附件未就绪/u)
     expect(operations.state.getSnapshot()).toMatchObject({
       uploads: 0, bundles: [{ state: 'failed', files: [{ uploadedBytes: 0 }] }],
     })

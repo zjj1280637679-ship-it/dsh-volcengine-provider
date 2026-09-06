@@ -26,6 +26,7 @@ import type {
   MediaSelection,
   ReadableStore,
 } from './media-operations.js'
+import { describeUiError } from './ui-feedback.js'
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: { message: string; code?: string } }
 
@@ -162,6 +163,10 @@ const BUNDLE_ID_PATTERN = /^[a-f0-9]{32}$/u
 const FILE_ID_PATTERN = /^[a-f0-9]{32}$/u
 const FILE_NAME_MAX_CHARS = 255
 const DISCARD_TIMEOUT_MS = 1_000
+
+function inputError(error: unknown): Error {
+  return new Error(describeUiError(error, '附件未就绪，请移除对应附件后重新添加。').message, { cause: error })
+}
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error.message)
@@ -312,17 +317,28 @@ export class NativeMediaDraftBridge {
     },
     matchEnter: async (session, line, signal) => {
       if (!line.startsWith(`/${NATIVE_MEDIA_MARKER_NAME_PREFIX}`)) return undefined
-      const ids = parseLeadingNativeMediaMarkers(line)
-      if (ids.length === 0 || nativeMediaMarkerIds(line).length !== ids.length) {
-        throw new Error('An Ark media attachment reference is malformed or was moved. Keep attachment chips at the start of the message.')
+      try {
+        const ids = parseLeadingNativeMediaMarkers(line)
+        if (ids.length === 0 || nativeMediaMarkerIds(line).length !== ids.length) {
+          throw new Error('An Ark media attachment reference is malformed or was moved. Keep attachment chips at the start of the message.')
+        }
+        if (new Set(ids).size !== ids.length) throw new Error('The same Ark media attachment cannot be submitted twice.')
+        await Promise.all(ids.map(id => this.validateBundle(session.sessionId, id, signal)))
+      } catch (error) {
+        if (signal.aborted) throw error
+        throw inputError(error)
       }
-      if (new Set(ids).size !== ids.length) throw new Error('The same Ark media attachment cannot be submitted twice.')
-      await Promise.all(ids.map(id => this.validateBundle(session.sessionId, id, signal)))
       return undefined
     },
     codec: {
       clipboardText: ref => formatNativeMediaMarker(ref),
-      serialize: (ref, signal) => this.serialize(ref, signal),
+      serialize: async (ref, signal) => {
+        try { return await this.serialize(ref, signal) }
+        catch (error) {
+          if (signal.aborted) throw error
+          throw inputError(error)
+        }
+      },
     },
   }
 
@@ -463,7 +479,6 @@ export class NativeMediaDraftBridge {
       if (!this.disposed && !controller.signal.aborted) {
         const message = error instanceof Error ? error.message : 'The Ark media upload failed; remove the attachment chip and select the file again.'
         this.updateDetail(sessionId, bundleId, { state: 'failed', error: message })
-        input.notify('error', message)
       }
     })
   }
