@@ -1,6 +1,6 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 开发版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
@@ -52,7 +52,7 @@ dsh --profile web
 
 从 GitHub commit 直接安装时，包的 `prepare` 会构建 TypeScript；pnpm 10 及以上要求用户在该 profile 明确授权 git 依赖的构建脚本。无需授予构建权限的交付路径仍是上面的预编译 `.tgz`。
 
-这是本地 alpha 包验证流程；`private: true` 保留，尚未发布 npm 或正式 Release。前置开发工作仍在草稿 PR 链上，不应把默认分支当成完整安装版本。
+这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.9` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.9) 的预编译 `.tgz` 为准；默认分支、版本标签和 Release 附件均应指向同一候选提交。
 
 ## 已实现与验证边界
 

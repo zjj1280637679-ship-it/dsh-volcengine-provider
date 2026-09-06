@@ -16,7 +16,7 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 3080,3081 | Sele
 
 ## 2. 构建与安装
 
-完整代码在本地 `codex/local-loop-20260906` 分支。`0.1.0-alpha.9` 是未发布的本地包，不要把默认分支或旧 alpha 报告当成本次候选。
+完整代码已合入默认分支，并以 [`v0.1.0-alpha.9`](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.9) GitHub 预发布版交付。安装时使用该 Release 的预编译 `.tgz`，并核对版本标签、候选 commit 和包 SHA-256；不要把旧 alpha 报告当成本次候选。
 
 ```powershell
 pnpm install --frozen-lockfile
