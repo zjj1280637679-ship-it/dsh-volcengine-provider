@@ -3,7 +3,7 @@ name: Release verified prerelease
 on:
   push:
     branches: [main]
-    paths: [package.json]
+    paths: [package.json, .github/workflows/release.yml]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,8 @@ jobs:
         with:
           node-version: 22.20.0
       - run: corepack enable
+      - name: Pin pnpm for new isolated profiles
+        run: corepack install --global pnpm@11.7.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Retain the exact verified package
@@ -43,7 +45,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dsh-cli"
           pnpm --dir "$RUNNER_TEMP/dsh-cli" add --ignore-scripts --save-exact @deepseek-ai/dsh@0.1.1-rc.2
-          node scripts/verify-cli-install.mjs "$RUNNER_TEMP/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js" release/dsh-volcengine-provider-*.tgz | tee release/cli-install-verification.txt
+          node scripts/verify-cli-install.mjs "$RUNNER_TEMP/dsh-cli/node_modules/@deepseek-ai/dsh/lib/bin.js" release/dsh-volcengine-provider-*.tgz > release/cli-install-verification.txt
+          test -s release/cli-install-verification.txt
+          cat release/cli-install-verification.txt
       - name: Seven bounded requests from the release package
         env:
           ARK_CODING_PLAN_API_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY }}

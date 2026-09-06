@@ -14,6 +14,9 @@ assert.equal(verification.package.version, manifest.version)
 assert.equal(live.packageVersion, manifest.version)
 assert.equal(live.productionSourceCommit, commit)
 assert.equal(live.ok, true, 'Live release gate must pass')
+const cliEvidence = await readFile(path.join(directory, 'cli-install-verification.txt'), 'utf8')
+assert(cliEvidence.includes(`CLI install verified: Harness 0.1.1-rc.2; plugin ${manifest.version};`),
+  'The isolated CLI check must complete and produce its success record')
 const hashFile = async name => createHash('sha256').update(await readFile(path.join(directory, name))).digest('hex')
 assert.equal(await hashFile(verification.package.filename), verification.package.sha256)
 
