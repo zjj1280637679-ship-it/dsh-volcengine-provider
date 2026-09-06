@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -79,7 +79,9 @@ describe('agent source-file materialization', () => {
       reused: false,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     })
-    expect(first.path.startsWith(join(workspace, '.dsh-media'))).toBe(true)
+    // Windows may canonicalize an 8.3 temp-directory segment while resolving
+    // the approved workspace. Compare against that same canonical root.
+    expect(first.path.startsWith(join(await realpath(workspace), '.dsh-media'))).toBe(true)
     expect(await readFile(first.path)).toEqual(Buffer.from(bytes))
 
     const restarted = new OriginalMediaStore(store.root)
@@ -88,6 +90,14 @@ describe('agent source-file materialization', () => {
       execution(session(workspace, ref)),
     )
     expect(second).toEqual({ ...first, reused: true })
+
+    await rm(first.path)
+    const restored = await createMediaMaterializeTool(ctx, restarted).execute(
+      { attachment_id: ref.attachmentId },
+      execution(session(workspace, ref)),
+    )
+    expect(restored).toEqual({ ...first, reused: false })
+    expect(await readFile(restored.path)).toEqual(Buffer.from(bytes))
     expect((await readdir(join(workspace, '.dsh-media', first.sha256))).filter(name => name.endsWith('.part')))
       .toEqual([])
   })
