@@ -42,12 +42,19 @@ export type EncodeMediaPart = (
   dataUrl: string,
 ) => WireUserPart
 
+/** Optional bridge from an Ark-visible media part to an agent-usable source file. */
+export interface MediaSourceBridge {
+  readonly toolName: string
+  describe(block: MediaInputBlock): string | undefined
+}
+
 export interface ChatSerializationOptions {
   modelConfig?: ModelConfig
   customBody?: RequestBody
   customBodyMode?: RequestBodyMode
   resolveMediaBytes?: ResolveMediaBytes
   encodeMediaPart?: EncodeMediaPart
+  mediaSourceBridge?: MediaSourceBridge
 }
 
 type BudgetedToolMediaBlock =
@@ -382,6 +389,7 @@ async function contentParts(
   options: ChatSerializationOptions,
   signal?: AbortSignal,
   toolMedia?: ToolMediaContext,
+  includeSourceHandles = false,
 ): Promise<WireUserPart[]> {
   const parts: WireUserPart[] = []
   for (const block of blocks) {
@@ -421,9 +429,13 @@ async function contentParts(
           break
         }
         parts.push(await encodeMedia(block, config, options, signal))
+        if (includeSourceHandles) {
+          const handle = options.mediaSourceBridge?.describe(block)
+          if (handle !== undefined && handle !== '') parts.push({ type: 'text', text: handle })
+        }
         break
       case 'tool-result':
-        parts.push(...await contentParts(block.content, config, options, signal, toolMedia))
+        parts.push(...await contentParts(block.content, config, options, signal, toolMedia, false))
         break
       default:
         // Newer Harness versions project generic file blocks to text before
@@ -483,7 +495,14 @@ export async function serializeMessages(
     const toolResults = message.content.filter(
       (block): block is Extract<ContentBlock, { type: 'tool-result' }> => block.type === 'tool-result',
     )
-    const regularParts = await contentParts(regular, config, options, signal)
+    const regularParts = await contentParts(
+      regular,
+      config,
+      options,
+      signal,
+      undefined,
+      message.source.kind === 'user',
+    )
     if (regularParts.length > 0 || toolResults.length === 0) {
       flushToolMedia()
       wire.push({ role: 'user', content: compactUserContent(regularParts) })

@@ -25,6 +25,7 @@ import { inspectLlmHost } from './host-compat.js'
 import { isArkChatMediaDeclaration } from './media-file-types.js'
 import { registerNativeMediaMerge } from './native-media-merge.js'
 import { NativeMediaStaging } from './native-media-staging.js'
+import { registerMediaMaterializeTool } from './agent-media-materialize.js'
 
 export { Config } from './config.js'
 export const name = SETTINGS_NS
@@ -163,13 +164,19 @@ export function apply(ctx: Context, config: Config = {}): void {
   // lifetimes. Their durable content-addressed objects intentionally share the
   // same root so the adapter can resolve either reference after a restart.
   const nativeStaging = new NativeMediaStaging(createOriginalMediaStore(ctx))
-  const adapter = new ConfiguredVolcengineAdapter({ route: routeFor, resolveKey, resolveMediaBytes: mediaResolver(ctx, originals) })
+  const mediaSourceBridge = registerMediaMaterializeTool(ctx, originals)
+  const adapter = new ConfiguredVolcengineAdapter({
+    route: routeFor,
+    resolveKey,
+    resolveMediaBytes: mediaResolver(ctx, originals),
+    mediaSourceBridge,
+  })
   let registered: AdapterRegistrationHandle | undefined
   let directory: DirectoryRegistrationHandle | undefined
   let ownedProviders = new Set<string>()
   let ownedDirectory = new Set<string>()
   registerMediaFallbackRpc(ctx, staging, nativeStaging)
-  registerNativeMediaMerge(ctx, nativeStaging, provider => ownedProviders.has(provider))
+  registerNativeMediaMerge(ctx, nativeStaging, provider => ownedProviders.has(provider), originals)
   registerMediaCommand(ctx, provider => ownedProviders.has(provider))
   registerLocalMediaCommand(ctx, provider => ownedProviders.has(provider), staging)
   const entriesFor = (value: ResolvedConfig) => Object.entries(value.routes).map(([key, route]) => ({

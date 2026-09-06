@@ -18,6 +18,8 @@ export interface VolcengineImageBlock {
   type: 'volcengine-image'
   attachment: VerbatimAttachmentRefLike
   mediaType: string
+  /** Verified server-side working copy retained with the session message. */
+  sourcePath?: string
 }
 
 /** Namespaced plugin block to avoid colliding with a future DSH core video block. */
@@ -25,6 +27,8 @@ export interface VolcengineVideoBlock {
   type: 'volcengine-video'
   attachment: VerbatimAttachmentRefLike
   mediaType: string
+  /** Verified server-side working copy retained with the session message. */
+  sourcePath?: string
 }
 
 /** Namespaced plugin block to avoid colliding with a future DSH core audio block. */
@@ -34,6 +38,8 @@ export interface VolcengineAudioBlock {
   mediaType: string
   /** Wire format declaration only; never requests a local audio conversion. */
   format?: string
+  /** Verified server-side working copy retained with the session message. */
+  sourcePath?: string
 }
 
 declare module '@deepseek-ai/dsh-llm' {

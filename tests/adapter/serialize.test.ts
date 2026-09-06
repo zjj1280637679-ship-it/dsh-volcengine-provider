@@ -313,6 +313,30 @@ describe('step 3 serializer', () => {
     expect(JSON.stringify(directBody.messages)).not.toContain('VOLCENGINE_AGENT_MEDIA_FALLBACK_ERROR')
   })
 
+  it('adds an agent source handle only beside direct-user media', async () => {
+    const describe = vi.fn(() => '[source handle]')
+    const resolveMediaBytes = vi.fn(async () => Uint8Array.of(1, 2))
+    const directBody = await serializeChatRequest(options([user([{
+      type: 'volcengine-video', attachment: attachment('direct-source', 2), mediaType: 'video/mp4',
+    }])]), {
+      resolveMediaBytes,
+      mediaSourceBridge: { toolName: 'materialize', describe },
+    })
+    expect((directBody.messages as Array<{ content: unknown }>)[0]!.content).toEqual([
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,AQI=' } },
+      { type: 'text', text: '[source handle]' },
+    ])
+
+    const toolBody = await serializeChatRequest(options([toolResult('call-source', [{
+      type: 'volcengine-video', attachment: attachment('tool-source', 2), mediaType: 'video/mp4',
+    }])]), {
+      resolveMediaBytes,
+      mediaSourceBridge: { toolName: 'materialize', describe },
+    })
+    expect(JSON.stringify(toolBody.messages)).not.toContain('[source handle]')
+    expect(describe).toHaveBeenCalledOnce()
+  })
+
   it('does not count or omit tool-result audio under the image/video fallback budget', async () => {
     const config = createDefaultModelConfig()
     config.agentMediaFallbackMB = 0.000001

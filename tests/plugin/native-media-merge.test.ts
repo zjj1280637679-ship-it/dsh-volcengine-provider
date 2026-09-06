@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,7 @@ afterEach(async () => {
 
 function context(): Context {
   const ctx = new Context()
+  ctx.provide('sessions', { flush: async () => true })
   contexts.push(ctx)
   return ctx
 }
@@ -130,10 +131,14 @@ function stagingFixture(): NativeMediaMergeStaging {
 
 function agent(selection: () => { provider: string; model: string } = () => ({
   provider: PROVIDER, model: MODEL,
-})): NativeMediaMergeAgent {
+}), cwd?: string): NativeMediaMergeAgent {
   return {
     id: SESSION,
-    session: { id: SESSION, requestHeader: () => ({ config: selection() }) },
+    session: {
+      id: SESSION,
+      ...(cwd === undefined ? {} : { header: { cwd } }),
+      requestHeader: () => ({ config: selection() }),
+    },
     steer: vi.fn(),
   }
 }
@@ -425,10 +430,85 @@ describe('native composer media merge', () => {
     )
   })
 
+  it('retains distinct verified paths when identical bytes have different source names', async () => {
+    const storeRoot = await mkdtemp(join(tmpdir(), 'dsh-native-copy-store-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-native-copy-workspace-'))
+    roots.push(storeRoot, workspace)
+    const store = new OriginalMediaStore(storeRoot)
+    const bytes = Uint8Array.of(1, 2, 3, 4)
+    const original = await store.persistVideo(bytes)
+    const first = { ...original, name: 'first.mp4' }
+    const second = { ...original, name: 'second.mp4' }
+    const staging = stagingFixture()
+    const ctx = context()
+    const message = direct(`${formatNativeMediaMarker(FIRST)} compare both names`)
+    vi.mocked(staging.materialize).mockResolvedValueOnce(bundle(FIRST, message.id, [
+      { ...file('a', 'video', 'video/mp4', first.name), sha256: store.hashOf(first), attachment: first },
+      { ...file('b', 'video', 'video/mp4', second.name), sha256: store.hashOf(second), attachment: second },
+    ]))
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true, store)
+
+    const accepted = (await merger.merge(
+      agent(undefined, workspace), [message], new AbortController().signal,
+    ))[0]!
+    const media = accepted.content.filter(block => block.type === 'volcengine-video')
+
+    expect(media).toHaveLength(2)
+    expect(media[0]!.sourcePath).not.toBe(media[1]!.sourcePath)
+    expect(media[0]!.sourcePath).toMatch(/[\\/]first\.mp4$/u)
+    expect(media[1]!.sourcePath).toMatch(/[\\/]second\.mp4$/u)
+    expect(await readFile(join(workspace, media[0]!.sourcePath!))).toEqual(Buffer.from(bytes))
+    expect(await readFile(join(workspace, media[1]!.sourcePath!))).toEqual(Buffer.from(bytes))
+  })
+
+  it('keeps accepted media but omits a working-copy path under read-only policy', async () => {
+    const storeRoot = await mkdtemp(join(tmpdir(), 'dsh-native-readonly-store-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-native-readonly-workspace-'))
+    roots.push(storeRoot, workspace)
+    const ctx = context()
+    ctx.provide('sandboxPolicy', {
+      resolve: () => ({ mode: 'read-only', workspaceRoot: workspace }),
+    })
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(
+      ctx, staging, () => true, new OriginalMediaStore(storeRoot),
+    )
+    const message = direct(`${formatNativeMediaMarker(FIRST)} keep this request`)
+
+    const accepted = (await merger.merge(
+      agent(undefined, workspace), [message], new AbortController().signal,
+    ))[0]!
+
+    expect(accepted.content.some(block => block.type.startsWith('volcengine-'))).toBe(true)
+    expect(accepted.content.filter(block => block.type.startsWith('volcengine-'))
+      .every(block => !('sourcePath' in block))).toBe(true)
+    expect(textOf(accepted)).toContain(' keep this request')
+  })
+
+  it('retains the durable bundle receipt until session persistence confirms the message', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const original = direct(`${formatNativeMediaMarker(FIRST)} question`)
+    const accepted = (await merger.merge(
+      agent(), [original], new AbortController().signal,
+    ))[0]!
+
+    merger.observeSessionEvent({ id: SESSION }, { type: 'user/message', data: accepted })
+    await merger.whenConfirmationsIdle()
+
+    expect(staging.confirm).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      'dsh-volcengine-provider: no session durability backend confirmed the media message; native media receipt retained',
+    )
+  })
+
   it('awaits the downstream pre-step decision before merging and confirms only post-commit', async () => {
     const handlers = new Map<string, unknown>()
     const fakeContext = {
-      get: () => undefined,
+      get: (name: string) => name === 'sessions' ? { flush: async () => true } : undefined,
       logger: { warn: vi.fn() },
       on: (name: string, listener: unknown) => { handlers.set(name, listener) },
     } as unknown as Context

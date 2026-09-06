@@ -1,8 +1,20 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { open, mkdir, readFile, rename, rmdir, stat, statfs, unlink } from 'node:fs/promises'
+import {
+  link,
+  lstat,
+  open,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rmdir,
+  stat,
+  statfs,
+  unlink,
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -61,6 +73,12 @@ export interface OriginalMediaStoreOptions {
   readonly availableBytes?: (path: string) => Promise<bigint>
   /** Test seam; production mints one unguessable directory per plugin instance. */
   readonly instanceId?: string
+}
+
+export interface OriginalMediaCopyResult {
+  readonly bytes: number
+  readonly reused: boolean
+  readonly sha256: string
 }
 
 function fallbackRoot(): string {
@@ -132,6 +150,17 @@ export class OriginalMediaStore {
 
   owns(ref: OriginalMediaAttachmentIdLike): boolean {
     return attachmentHash(ref) !== undefined
+  }
+
+  /** Return the verified reference digest without revealing the private store path. */
+  hashOf(ref: OriginalMediaAttachmentIdLike): string {
+    const hash = attachmentHash(ref)
+    const bytes = ref.bytes
+    if (hash === undefined || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0
+      || !isSafeOriginalMediaName(ref.name)) {
+      throw new OriginalMediaStoreError('The original-media reference is invalid.')
+    }
+    return hash
   }
 
   private pathFor(hash: string): string {
@@ -214,6 +243,33 @@ export class OriginalMediaStore {
 
   private async verifyPublished(hash: string, bytes: number, signal?: AbortSignal): Promise<void> {
     return this.verifyPath(this.pathFor(hash), bytes, hash, signal)
+  }
+
+  private async verifyExistingCopy(
+    target: string,
+    bytes: number,
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    let info: Awaited<ReturnType<typeof lstat>>
+    try {
+      info = await lstat(target)
+    } catch (cause) {
+      if (systemCode(cause) === 'ENOENT') return false
+      throw new OriginalMediaStoreError('The workspace media destination is unavailable.', { cause })
+    }
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw new OriginalMediaStoreError('The workspace media destination is not a regular file.')
+    }
+    try {
+      await this.verifyPath(target, bytes, hash, signal)
+    } catch (cause) {
+      throw new OriginalMediaStoreError(
+        'The workspace media destination already contains different bytes.',
+        { cause },
+      )
+    }
+    return true
   }
 
   /** Persist already-materialized exact bytes; no plugin-defined size policy is applied. */
@@ -413,25 +469,112 @@ export class OriginalMediaStore {
 
   /** Stream-verify an owned durable reference without materializing its bytes. */
   async verify(ref: OriginalMediaAttachmentIdLike, signal?: AbortSignal): Promise<void> {
-    const hash = attachmentHash(ref)
-    const bytes = ref.bytes
-    if (hash === undefined || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0
-      || !isSafeOriginalMediaName(ref.name)) {
-      throw new OriginalMediaStoreError('The original-media reference is invalid.')
-    }
+    const hash = this.hashOf(ref)
+    const bytes = ref.bytes!
     await this.ensureReady()
     signal?.throwIfAborted()
     await this.verifyPublished(hash, bytes, signal)
   }
 
+  /**
+   * Stream a verified working copy into an already-approved destination.
+   * Publication uses a same-directory hard link so concurrent calls never
+   * overwrite a file chosen by the user or another tool.
+   */
+  async copyTo(
+    ref: OriginalMediaAttachmentIdLike,
+    target: string,
+    signal?: AbortSignal,
+    expectedParent?: string,
+  ): Promise<OriginalMediaCopyResult> {
+    const hash = this.hashOf(ref)
+    const bytes = ref.bytes!
+    if (!isAbsolute(target) || basename(target) === '') {
+      throw new OriginalMediaStoreError('The workspace media destination is invalid.')
+    }
+    await this.ensureReady()
+    signal?.throwIfAborted()
+    const assertExpectedParent = async (): Promise<void> => {
+      if (expectedParent === undefined) return
+      let parent: string
+      let info: Awaited<ReturnType<typeof lstat>>
+      try {
+        info = await lstat(dirname(target))
+        parent = await realpath(dirname(target))
+      } catch (cause) {
+        throw new OriginalMediaStoreError('The workspace media destination is unavailable.', { cause })
+      }
+      if (!info.isDirectory() || info.isSymbolicLink() || parent !== expectedParent) {
+        throw new OriginalMediaStoreError('The workspace media destination escaped its approved directory.')
+      }
+    }
+    await assertExpectedParent()
+    if (await this.verifyExistingCopy(target, bytes, hash, signal)) {
+      return { bytes, reused: true, sha256: hash }
+    }
+
+    const temporary = join(
+      dirname(target),
+      `.${basename(target)}.${randomBytes(16).toString('hex')}.part`,
+    )
+    let file: Awaited<ReturnType<typeof open>> | undefined
+    let temporaryExists = false
+    try {
+      await assertExpectedParent()
+      file = await open(temporary, 'wx', 0o600)
+      temporaryExists = true
+      const copiedHash = createHash('sha256')
+      let copiedBytes = 0
+      for await (const raw of createReadStream(this.pathFor(hash), { signal })) {
+        signal?.throwIfAborted()
+        const chunk = raw as Buffer
+        let written = 0
+        while (written < chunk.byteLength) {
+          const result = await file.write(chunk, written, chunk.byteLength - written)
+          if (result.bytesWritten <= 0) {
+            throw new OriginalMediaStoreError('The workspace media copy did not make progress.')
+          }
+          written += result.bytesWritten
+        }
+        copiedBytes += chunk.byteLength
+        if (!Number.isSafeInteger(copiedBytes)) {
+          throw new OriginalMediaStoreError('The workspace media copy is too large to represent safely.')
+        }
+        copiedHash.update(chunk)
+      }
+      if (copiedBytes !== bytes || copiedHash.digest('hex') !== hash) {
+        throw new OriginalMediaStoreError('The workspace media copy failed its integrity check.')
+      }
+      await file.sync()
+      await file.close()
+      file = undefined
+      signal?.throwIfAborted()
+      await assertExpectedParent()
+      try {
+        await link(temporary, target)
+      } catch (cause) {
+        if (systemCode(cause) !== 'EEXIST') throw cause
+        if (!await this.verifyExistingCopy(target, bytes, hash, signal)) {
+          throw new OriginalMediaStoreError('The workspace media destination is unavailable.')
+        }
+        return { bytes, reused: true, sha256: hash }
+      }
+      await assertExpectedParent()
+      await this.verifyPath(target, bytes, hash, signal)
+      return { bytes, reused: false, sha256: hash }
+    } catch (cause) {
+      if (cause instanceof OriginalMediaStoreError || signal?.aborted) throw cause
+      throw new OriginalMediaStoreError('The original media could not be copied into the workspace.', { cause })
+    } finally {
+      if (file !== undefined) await file.close().catch(() => undefined)
+      if (temporaryExists) await unlink(temporary).catch(() => undefined)
+    }
+  }
+
   /** Read an owned reference only after rechecking both length and digest. */
   async read(ref: OriginalMediaAttachmentIdLike, signal?: AbortSignal): Promise<Uint8Array> {
-    const hash = attachmentHash(ref)
-    const bytes = ref.bytes
-    if (hash === undefined || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0
-      || !isSafeOriginalMediaName(ref.name)) {
-      throw new OriginalMediaStoreError('The original-media reference is invalid.')
-    }
+    const hash = this.hashOf(ref)
+    const bytes = ref.bytes!
     await this.ensureReady()
     signal?.throwIfAborted()
     let stored: Buffer

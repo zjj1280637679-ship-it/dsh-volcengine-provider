@@ -8,12 +8,13 @@ import {
 
 import { VolcengineChatAdapter, type VolcengineChatConnection } from './chat/adapter.js'
 import { type ModelCardConfig, type ResolvedRouteConfig, modelPolicy, parseModelBody } from './config.js'
-import type { ResolveMediaBytes } from './chat/serialize.js'
+import type { MediaSourceBridge, ResolveMediaBytes } from './chat/serialize.js'
 
 export interface ConfiguredAdapterOptions {
   route(provider: string): ResolvedRouteConfig
   resolveKey(reference: string): Promise<string>
   resolveMediaBytes: ResolveMediaBytes
+  mediaSourceBridge?: MediaSourceBridge
 }
 
 function modelInfo(provider: string, id: string, card?: ModelCardConfig): LlmResolvedModelInfo {
@@ -36,6 +37,7 @@ export class ConfiguredVolcengineAdapter extends VolcengineChatAdapter {
         return connection(route, route.models.find(card => card.id === model), await source.resolveKey(route.apiKeyEnv))
       },
       resolveMediaBytes: source.resolveMediaBytes,
+      mediaSourceBridge: source.mediaSourceBridge,
     })
   }
 
@@ -66,6 +68,7 @@ export class ConfiguredVolcengineAdapter extends VolcengineChatAdapter {
     const adapter = new VolcengineChatAdapter({
       resolveConnection: () => snapshot,
       resolveMediaBytes: this.source.resolveMediaBytes,
+      mediaSourceBridge: this.source.mediaSourceBridge,
       feedback: this.feedback,
     })
     return {

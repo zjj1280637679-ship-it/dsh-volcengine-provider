@@ -21,6 +21,7 @@ import { parseJsonResponse, providerHttpError } from './errors.js'
 import {
   inspectChatMediaFootprint, serializeChatRequest,
   type EncodeMediaPart,
+  type MediaSourceBridge,
   type ResolveMediaBytes,
 } from './serialize.js'
 import { acquireMediaRequest, type InspectMediaRuntimeMemory } from './media-runtime.js'
@@ -49,6 +50,7 @@ export interface VolcengineChatAdapterOptions {
   resolveConnection: ResolveVolcengineChatConnection
   resolveMediaBytes?: ResolveMediaBytes
   encodeMediaPart?: EncodeMediaPart
+  mediaSourceBridge?: MediaSourceBridge
   feedback?: ModelFeedbackStore
   fetchImpl?: typeof fetch
   /** Deterministic seam for resource-admission tests; production reads live process/OS state. */
@@ -130,6 +132,7 @@ export class VolcengineChatAdapter extends LlmAdapter {
       customBodyMode: connection.customBodyMode,
       resolveMediaBytes: this.config.resolveMediaBytes,
       encodeMediaPart: this.config.encodeMediaPart,
+      mediaSourceBridge: this.config.mediaSourceBridge,
     }
     const footprint = inspectChatMediaFootprint(options, serialization)
     let response: Response

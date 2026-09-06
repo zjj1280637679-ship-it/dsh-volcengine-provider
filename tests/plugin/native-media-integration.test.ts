@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,7 @@ import LlmRuntime, {
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { formatNativeMediaMarker } from '../../src/native-media-marker.js'
+import type { MediaMaterializeToolDefinition } from '../../src/agent-media-materialize.js'
 import * as VolcenginePlugin from '../../src/plugin.js'
 import { enqueueCompletion, MemoryCredentials, MemorySettings } from './fixtures.js'
 import { startFakeArk, type FakeArk } from '../support/fake-ark.js'
@@ -47,6 +48,7 @@ function value<T>(result: RpcResult): T {
 async function boot(root: string, fake: FakeArk): Promise<{
   ctx: Context
   rpc(endpoint: string, payload: unknown): Promise<RpcResult>
+  tool(): MediaMaterializeToolDefinition
 }> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -54,6 +56,14 @@ async function boot(root: string, fake: FakeArk): Promise<{
   await ctx.plugin(MemorySettings)
   await ctx.plugin(MemoryCredentials, { TEST_NATIVE_MEDIA_KEY: 'fixture-key' })
   ctx.provide('dshHomePath', (...segments: string[]) => join(root, ...segments))
+  ctx.provide('sessions', { flush: async () => true })
+  let mediaTool: MediaMaterializeToolDefinition | undefined
+  ctx.provide('tools', {
+    register: (definition: MediaMaterializeToolDefinition) => {
+      mediaTool = definition
+      return () => { if (mediaTool === definition) mediaTool = undefined }
+    },
+  })
   let handler: RpcHandler | undefined
   function handle(
     channel: string,
@@ -76,6 +86,10 @@ async function boot(root: string, fake: FakeArk): Promise<{
   return {
     ctx,
     rpc: (endpoint, payload) => handler!(endpoint, payload, new AbortController().signal),
+    tool: () => {
+      if (mediaTool === undefined) throw new Error('media materialize tool was not registered')
+      return mediaTool
+    },
   }
 }
 
@@ -92,6 +106,8 @@ describe('native composer media across restart and the real Ark adapter boundary
   it('keeps one user message and preserves every original media byte', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-volcengine-native-e2e-'))
     roots.push(root)
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace)
     const fake = await startFakeArk()
     servers.push(fake)
     const image = await readFile(new URL('../fixtures/live-media/image.png', import.meta.url))
@@ -146,6 +162,7 @@ describe('native composer media across restart and the real Ark adapter boundary
       id: SESSION,
       session: {
         id: SESSION,
+        header: { cwd: workspace },
         requestHeader: () => ({ config: { provider: PROVIDER, model: MODEL } }),
       },
       steer: () => {},
@@ -166,6 +183,16 @@ describe('native composer media across restart and the real Ark adapter boundary
     expect(accepted.content.map(block => block.type)).toEqual([
       'volcengine-image', 'volcengine-video', 'volcengine-audio', 'text',
     ])
+    const retainedMedia = accepted.content.filter(block => block.type.startsWith('volcengine-'))
+    expect(retainedMedia).toHaveLength(3)
+    for (let index = 0; index < retainedMedia.length; index++) {
+      const block = retainedMedia[index] as Extract<typeof accepted.content[number], {
+        type: 'volcengine-image' | 'volcengine-video' | 'volcengine-audio'
+      }>
+      expect(block.sourcePath).toMatch(/^\.dsh-media[\\/][a-f0-9]{64}[\\/]/u)
+      expect(block.sourcePath).not.toContain(root)
+      expect(await readFile(join(workspace, block.sourcePath!))).toEqual(bytes[index])
+    }
     expect(JSON.stringify(accepted)).not.toContain('__dsh_volc_media_v1_')
 
     ;(restarted.ctx as unknown as {
@@ -187,17 +214,40 @@ describe('native composer media across restart and the real Ark adapter boundary
       }> }]
     }
     const sent = body.messages[0].content
-    expect(sent.map(part => part.type)).toEqual(['image_url', 'video_url', 'input_audio', 'text'])
-    expect(sent[3]).toEqual({ type: 'text', text: ' describe all media' })
+    expect(sent.map(part => part.type)).toEqual([
+      'image_url', 'text', 'video_url', 'text', 'input_audio', 'text', 'text',
+    ])
+    expect(sent[6]).toEqual({ type: 'text', text: ' describe all media' })
+    const handles = sent.filter(part => part.type === 'text' && part.text?.includes('[Source file:'))
+    expect(handles).toHaveLength(3)
+    expect(handles.every(part => part.text!.includes('path='))).toBe(true)
+    expect(handles.every(part => !part.text!.includes(root))).toBe(true)
     const imagePrefix = 'data:image/png;base64,'
     const videoPrefix = 'data:video/mp4;base64,'
     expect(sent[0]!.image_url!.url.startsWith(imagePrefix)).toBe(true)
-    expect(sent[1]!.video_url!.url.startsWith(videoPrefix)).toBe(true)
+    expect(sent[2]!.video_url!.url.startsWith(videoPrefix)).toBe(true)
     expect(hash(Buffer.from(sent[0]!.image_url!.url.slice(imagePrefix.length), 'base64'))).toBe(hash(image))
-    expect(hash(Buffer.from(sent[1]!.video_url!.url.slice(videoPrefix.length), 'base64'))).toBe(hash(video))
-    expect(sent[2]!.input_audio!.format).toBe('mp3')
-    expect(hash(Buffer.from(sent[2]!.input_audio!.data, 'base64'))).toBe(hash(audio))
+    expect(hash(Buffer.from(sent[2]!.video_url!.url.slice(videoPrefix.length), 'base64'))).toBe(hash(video))
+    expect(sent[4]!.input_audio!.format).toBe('mp3')
+    expect(hash(Buffer.from(sent[4]!.input_audio!.data, 'base64'))).toBe(hash(audio))
     expect(JSON.stringify(fake.requests[0]!.json)).not.toContain('__dsh_volc_media_v1_')
+
+    const videoBlock = accepted.content.find(block => block.type === 'volcengine-video')!
+    const materialized = await restarted.tool().execute(
+      { attachment_id: videoBlock.attachment.attachmentId },
+      {
+        agent: {
+          session: {
+            header: { cwd: workspace },
+            events: [{ type: 'user/message', data: accepted }],
+          },
+        },
+        signal: new AbortController().signal,
+      },
+    )
+    expect(await readFile(materialized.path)).toEqual(video)
+    expect(materialized.sha256).toBe(hash(video))
+    expect(materialized.reused).toBe(true)
     await eventuallyNoBundles(restarted.rpc)
   })
 })

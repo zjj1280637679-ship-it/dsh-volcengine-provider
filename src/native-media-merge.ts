@@ -15,6 +15,12 @@ import type {
   NativeMediaBundleStatus,
   NativeMediaClaim,
 } from './native-media-staging.js'
+import {
+  materializeMediaCopy,
+  retainedMediaRelativePath,
+  type MediaMaterializationSession,
+} from './agent-media-materialize.js'
+import type { OriginalMediaStore } from './original-media-store.js'
 
 export type NativeMediaFallbackCode =
   | 'BUNDLE_UNAVAILABLE'
@@ -29,6 +35,7 @@ export interface NativeMediaMergeAgent {
   readonly id: string
   readonly session: {
     readonly id: string
+    readonly header?: { readonly cwd?: unknown }
     requestHeader(): {
       readonly config: { readonly provider: string; readonly model?: string }
     } | undefined
@@ -84,6 +91,10 @@ interface SessionLike {
   readonly id: string
 }
 
+interface SessionStoreLike {
+  flush(session: SessionLike): Promise<boolean>
+}
+
 interface SessionEventLike {
   readonly type: string
   readonly data: unknown
@@ -109,6 +120,14 @@ interface PendingConfirmation {
   readonly messageId: string
   readonly bundleIds: readonly string[]
   readonly contentJson: string
+}
+
+function mediaSourceKey(attachment: {
+  readonly attachmentId: string
+  readonly name: string
+  readonly bytes: number
+}): string {
+  return JSON.stringify([attachment.attachmentId, attachment.name, attachment.bytes])
 }
 
 const FALLBACK_CLEANUP_TIMEOUT_MS = 2_000
@@ -180,13 +199,19 @@ function fallbackMessage(message: UserMessage, code: NativeMediaFallbackCode): U
   return freezeMessage({ ...message, content })
 }
 
-function mediaBlocks(bundle: MaterializedNativeMediaBundle): ContentBlock[] {
+function mediaBlocks(
+  bundle: MaterializedNativeMediaBundle,
+  sourcePaths: ReadonlyMap<string, string>,
+): ContentBlock[] {
   return bundle.files.map((file): ContentBlock => {
+    const sourcePath = sourcePaths.get(mediaSourceKey(file.attachment))
+    const retained = sourcePath === undefined ? {} : { sourcePath }
     if (file.modality === 'image') {
       return {
         type: 'volcengine-image',
         attachment: file.attachment,
         mediaType: file.mediaType,
+        ...retained,
       }
     }
     if (file.modality === 'video') {
@@ -194,6 +219,7 @@ function mediaBlocks(bundle: MaterializedNativeMediaBundle): ContentBlock[] {
         type: 'volcengine-video',
         attachment: file.attachment,
         mediaType: file.mediaType,
+        ...retained,
       }
     }
     return {
@@ -201,6 +227,7 @@ function mediaBlocks(bundle: MaterializedNativeMediaBundle): ContentBlock[] {
       attachment: file.attachment,
       mediaType: file.mediaType,
       ...(file.format === undefined ? {} : { format: file.format }),
+      ...retained,
     }
   })
 }
@@ -209,6 +236,7 @@ function mediaBlocks(bundle: MaterializedNativeMediaBundle): ContentBlock[] {
 function mergedMessage(
   message: UserMessage,
   materialized: ReadonlyMap<string, MaterializedNativeMediaBundle>,
+  sourcePaths: ReadonlyMap<string, string>,
 ): UserMessage {
   const content: ContentBlock[] = []
   for (const block of message.content) {
@@ -225,7 +253,7 @@ function mergedMessage(
     for (const occurrence of occurrences) {
       const before = block.text.slice(cursor, occurrence.start)
       if (before !== '') content.push({ type: 'text', text: before })
-      content.push(...mediaBlocks(materialized.get(occurrence.bundleId)!))
+      content.push(...mediaBlocks(materialized.get(occurrence.bundleId)!, sourcePaths))
       cursor = occurrence.end
     }
     const after = block.text.slice(cursor)
@@ -257,7 +285,53 @@ export class NativeMediaMessageMerger {
     readonly ctx: Context,
     readonly staging: NativeMediaMergeStaging,
     readonly isOwnedProvider: (provider: string) => boolean,
+    readonly originals?: OriginalMediaStore,
   ) {}
+
+  private async retainSourcePaths(
+    session: MediaMaterializationSession,
+    bundles: readonly MaterializedNativeMediaBundle[],
+    signal: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const retained = new Map<string, string>()
+    if (this.originals === undefined) return retained
+    for (const bundle of bundles) {
+      for (const file of bundle.files) {
+        try {
+          await materializeMediaCopy(
+            this.ctx, this.originals, session, file.attachment, file.mediaType, signal,
+          )
+          retained.set(
+            mediaSourceKey(file.attachment),
+            retainedMediaRelativePath(this.originals, file.attachment),
+          )
+        } catch {
+          signal.throwIfAborted()
+          try {
+            this.ctx.logger.warn('dsh-volcengine-provider: uploaded media working copy could not be retained; opaque source handle kept')
+          } catch {
+            // Diagnostics must not reject an otherwise valid user upload.
+          }
+        }
+      }
+    }
+    return retained
+  }
+
+  private async durable(session: SessionLike): Promise<boolean> {
+    // `session/event` publication is synchronous. Yield once so every storage
+    // listener has first enqueued this event, regardless of listener order,
+    // before asking the SessionStore for its durability barrier.
+    await Promise.resolve()
+    const sessions = this.ctx.get('sessions') as SessionStoreLike | undefined
+    if (sessions === undefined || typeof sessions.flush !== 'function') return false
+    try {
+      return await sessions.flush(session)
+    } catch {
+      this.ctx.logger.warn('dsh-volcengine-provider: session durability checkpoint failed; native media receipt retained')
+      return false
+    }
+  }
 
   private fallback(message: UserMessage, code: NativeMediaFallbackCode): UserMessage {
     try {
@@ -376,6 +450,10 @@ export class NativeMediaMessageMerger {
         return fail('MEDIA_UNAVAILABLE')
       }
 
+      const bundles = results.map(result => (
+        result as PromiseFulfilledResult<MaterializedNativeMediaBundle>
+      ).value)
+      const sourcePaths = await this.retainSourcePaths(agent.session, bundles, signal)
       const latest = selectedModel(this.ctx, agent)
       if (!isCurrentSelection(
         latest, selection.provider, selection.model, this.isOwnedProvider,
@@ -385,7 +463,7 @@ export class NativeMediaMessageMerger {
         bundleIds[index]!,
         (result as PromiseFulfilledResult<MaterializedNativeMediaBundle>).value,
       ]))
-      const merged = mergedMessage(message, byBundle)
+      const merged = mergedMessage(message, byBundle, sourcePaths)
       this.remember(sessionId, messageId, bundleIds, merged)
       return merged
     } catch {
@@ -427,9 +505,14 @@ export class NativeMediaMessageMerger {
     const exactContent = 'content' in event.data && Array.isArray(event.data.content)
       && JSON.stringify(event.data.content) === pending.contentJson
     const operation = exactContent
-      ? Promise.allSettled(pending.bundleIds.map(bundleId => this.staging.confirm(
-        pending.sessionId, bundleId, pending.messageId,
-      ))).then(results => {
+      ? this.durable(session).then(async durable => {
+        if (!durable) {
+          this.ctx.logger.warn('dsh-volcengine-provider: no session durability backend confirmed the media message; native media receipt retained')
+          return
+        }
+        const results = await Promise.allSettled(pending.bundleIds.map(bundleId => this.staging.confirm(
+          pending.sessionId, bundleId, pending.messageId,
+        )))
         if (results.some(result => result.status === 'rejected' || result.value !== true)) {
           this.ctx.logger.warn('dsh-volcengine-provider: a durable native media bundle could not be retired')
         }
@@ -458,8 +541,9 @@ export function registerNativeMediaMerge(
   ctx: Context,
   staging: NativeMediaMergeStaging,
   isOwnedProvider: (provider: string) => boolean,
+  originals?: OriginalMediaStore,
 ): NativeMediaMessageMerger {
-  const merger = new NativeMediaMessageMerger(ctx, staging, isOwnedProvider)
+  const merger = new NativeMediaMessageMerger(ctx, staging, isOwnedProvider, originals)
   const events = ctx as unknown as NativeMediaEventContext
   events.on('agent/pre-step', async ({ agent, signal }, next) => {
     const decision = await next()

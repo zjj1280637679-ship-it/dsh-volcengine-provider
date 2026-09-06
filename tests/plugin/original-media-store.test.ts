@@ -140,6 +140,29 @@ describe('plugin-owned original media store', () => {
     expect(await restarted.read(ref)).toEqual(bytes)
   })
 
+  it('publishes a verified workspace copy without overwriting a conflicting destination', async () => {
+    const { root, store } = await fixture()
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-volcengine-workspace-copy-'))
+    roots.push(workspace)
+    const bytes = Uint8Array.of(4, 8, 15, 16, 23, 42)
+    const ref = await store.persistVideo(bytes)
+    const target = join(workspace, 'source.mp4')
+
+    await expect(store.copyTo(ref, target)).resolves.toMatchObject({
+      bytes: bytes.byteLength,
+      reused: false,
+      sha256: ref.attachmentId.slice(-64),
+    })
+    expect(await readFile(target)).toEqual(Buffer.from(bytes))
+    await expect(new OriginalMediaStore(root).copyTo(ref, target)).resolves.toMatchObject({ reused: true })
+
+    const conflicting = join(workspace, 'conflict.mp4')
+    await writeFile(conflicting, Uint8Array.of(9, 9, 9))
+    await expect(store.copyTo(ref, conflicting)).rejects.toThrow('different bytes')
+    expect(await readFile(conflicting)).toEqual(Buffer.from([9, 9, 9]))
+    expect((await readdir(workspace)).some(name => name.endsWith('.part'))).toBe(false)
+  })
+
   it('rejects path-like general media names without consuming the staged bytes', async () => {
     const { store } = await fixture()
     const token = '5'.repeat(64)

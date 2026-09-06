@@ -1,6 +1,6 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.12` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三条独立通道，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.13` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三条独立通道，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
@@ -35,7 +35,7 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.12` 预
 
 ## 本地构建与安装
 
-本次优化与测评要点见 [alpha.12 发布说明](docs/releases/alpha.12.md)。在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 安装预编译包并完成最小验收。
+本次优化与测评要点见 [alpha.13 发布说明](docs/releases/alpha.13.md)。在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 安装预编译包并完成最小验收。
 
 需要 Node.js `^22.19.0 || >=24.0.0`、本仓库声明的 pnpm，以及已安装的 Harness CLI。
 
@@ -45,7 +45,7 @@ pnpm run typecheck
 pnpm test
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.12.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.13.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -54,7 +54,7 @@ dsh --profile web
 
 从 GitHub commit 直接安装时，包的 `prepare` 会构建 TypeScript；pnpm 10 及以上要求用户在该 profile 明确授权 git 依赖的构建脚本。无需授予构建权限的交付路径仍是上面的预编译 `.tgz`。
 
-这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.12` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.12) 的预编译 `.tgz` 为准；版本标签和被验证的 Release 附件绑定同一候选提交。
+这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.13` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.13) 的预编译 `.tgz` 为准；版本标签和被验证的 Release 附件绑定同一候选提交。
 
 ## 已实现与验证边界
 
@@ -80,6 +80,8 @@ dsh --profile web
 用户主动选择的文件没有插件定义的总文件大小上限，也不受“智能体媒体续链预算”影响。安全整数、Node 可表示范围、实时磁盘容量及 V8／系统内存不足属于必须显式报告的物理边界；其余请求体、模型和服务限制交给方舟 API 返回真实错误。带媒体的请求在进程内逐个完成完整原字节读取、Base64／JSON 编码及 HTTP 请求体提交，排队可取消，纯文本不受媒体编码闸门影响。这不是任意大小必然可发的承诺，也不会把文档示例值偷换成插件硬限制。
 
 原图片／视频／音频在适配器边界保持原字节，不压缩、不抽帧、不转码；Chat 音频使用 `input_audio.data` 裸 Base64 与格式标识。媒体引用进入 Harness 后若在 bundle 物化阶段失效，插件保留该条用户文本并添加简短的附件未发送提示，内部原因码仅写日志；已通过续链预算的 Agent `tool-result` 图片／视频若单块读取、完整性校验或编码失败，也只省略该块并退还预算。取消、显式模态禁用以及请求级 Node 可表示性／实时内存不足仍明确中止，不伪装成成功。用户直接提交后收到的真实方舟拒绝则原样可见，不自动改模型、压缩、重试或抽帧。详见 [第六步原始媒体 UI](docs/step6-original-media-ui.md) 与 [第五步媒体输入](docs/step5-media-input.md)。
+
+用户原始媒体合并进消息时，会在首次模型请求前把原字节流式复制到工作区 `.dsh-media/<sha256>/<文件名>`，并把经过派生校验的相对路径随媒体块持久化；智能体当前轮、后续轮和同机冷重启后都能沿用这个工作副本。仅供模型请求使用的简短 source handle 不向聊天 UI 增加说明，也不暴露插件私有内容库路径。若工作副本被外部删除，智能体可调用 `volcengine_media_materialize` 按当前会话的不透明附件 ID 恢复；长度与 SHA-256 必须一致，目标冲突绝不覆盖。只读会话不写工作副本但仍发送用户文本与方舟媒体。上传清单也只在 SessionStore 的持久化 barrier 明确成功后退役，不能把内存事件通知误当成已经落盘。
 
 官方 `ark-plan-api` 与本插件使用不同的配置行和 Provider ID，技术上可共存，但会出现含义相近、凭据与协议路径不同的方舟卡片。验收或长期使用时建议在隔离 profile 中明确选择一种，尤其不要把 Coding Plan 密钥误发到普通 `/api/v3` 通道。
 

@@ -1,4 +1,4 @@
-# 本机接手：alpha.12 火山方舟插件
+# 本机接手：alpha.13 火山方舟插件
 
 目标是：配置方舟供应商 → 选模型 → 用主输入框旁的彩色 `+` 添加原始媒体 → 与文本作为同一消息发送 → 收到回复或真实错误 → 完整关闭并重启同一个 Harness 后继续使用。
 
@@ -16,13 +16,13 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 3080,3081 | Sele
 
 ## 2. 构建与安装
 
-完整代码以 [`v0.1.0-alpha.12`](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.12) GitHub 预发布版交付。安装时使用该 Release 的预编译 `.tgz`，并核对版本标签、候选 commit 和包 SHA-256；不要把旧 alpha 报告当成本次候选。
+完整代码以 [`v0.1.0-alpha.13`](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.13) GitHub 预发布版交付。安装时使用该 Release 的预编译 `.tgz`，并核对版本标签、候选 commit 和包 SHA-256；不要把旧 alpha 报告当成本次候选。
 
 从 Release 下载预编译包时不需要在本机先编译。在下载目录运行：
 
 ```powershell
-Get-FileHash ./dsh-volcengine-provider-0.1.0-alpha.12.tgz -Algorithm SHA256
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.12.tgz
+Get-FileHash ./dsh-volcengine-provider-0.1.0-alpha.13.tgz -Algorithm SHA256
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.13.tgz
 dsh --profile web --dump-config
 ```
 
@@ -59,8 +59,8 @@ node scripts/verify-package.mjs --output-dir release-artifacts
 1. 冷启动 `cmd.exe /d /c npx @deepseek-ai/dsh web`，核对唯一进程树、loopback 监听、HTTP 标题与实际 PID 来源。
 2. 检查通道选择、名称、地址与未就绪状态，在窄窗口与深浅主题中检查可读性。来回切换通道保留未保存草稿；保存及搜索保留模型展开状态；模型删除可撤销，无效 JSON 或重复 ID 定位到字段。依次保存不同通道不应产生假冲突，保存后立即换页也应完成保存；真正同通道并发冲突应保留草稿。
 3. 发送纯文本，确认真实回复或结构化上游错误。
-4. 选择受控原始图片、音频、完整视频；在同一主输入写问题后发送。抽帧图片不能计作视频理解验收。
-5. 先输入至少 80 字正文，分两次点击加号分别添加文件，形成两个 chip；刷新后逐字检查正文与两个附件；再完整关闭 Harness，确认旧 PID 和端口消失，重新从上述日常命令启动并确认 chip／引用恢复。
+4. 选择受控原始图片、音频、完整视频；在同一主输入写问题后发送。抽帧图片不能计作视频理解验收。检查智能体收到的 source handle 含 `.dsh-media/<sha256>/<文件名>` 相对路径，并核对该工作副本的字节数与 SHA-256。
+5. 先输入至少 80 字正文，分两次点击加号分别添加文件，形成两个 chip；刷新后逐字检查正文与两个附件；再完整关闭 Harness，确认旧 PID 和端口消失，重新从上述日常命令启动并确认 chip／引用恢复。让智能体在不重新上传、不抽帧、不转码的条件下读取刚才的工作副本，并再次核对字节数与 SHA-256。
 6. 检查中文输入法、Enter、Shift+Enter、取消，以及普通发送、忙时 queue 和 steer；三者都必须保持一个原生 UserMessage 和同一 message ID。
 7. 让方舟 API 对不支持或过大的用户媒体返回真实错误，确认插件不自动压缩、抽帧、切模型或改写模态。
 8. 模拟已接收消息后的本地媒体失效，确认文本继续、媒体省略并带简短中文失败原因，内部原因码仅写入日志。
@@ -72,7 +72,7 @@ node scripts/verify-package.mjs --output-dir release-artifacts
 
 同机重启恢复依赖同一个 `DSH_HOME`。当前会话导出不保证携带插件持久媒体对象，不能把本机恢复推断成跨电脑迁移。历史消息中的自定义媒体块仍可能由 Host 以 JSON 展示。队列 UI 也可能在消息被 Agent 领取前短暂显示内部 marker；这是当前宿主队列渲染扩展点的边界，不影响同一消息投递，但必须在报告中如实写明。
 
-本版发布证据和剩余边界见 [alpha.12 发布说明](releases/alpha.12.md) 与 Release 附件。包级冷启动和组件交互验证不等于完整桌面浏览器验收。
+本版发布证据和剩余边界见 [alpha.13 发布说明](releases/alpha.13.md) 与 Release 附件。包级冷启动和组件交互验证不等于完整桌面浏览器验收。
 
 出现问题时记录插件/Host/Node 版本、通道、模型 ID、操作步骤和错误 request ID，并隐藏密钥。如需回退，停止 Harness 后安装保留的旧 tarball 并恢复冷备份 profile，不删除历史媒体所在的原 `DSH_HOME`。
 
