@@ -1,0 +1,29 @@
+name: Archive completed branches
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/branch-archive-plan.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: branch-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - name: Preserve exact tips and retire completed branches atomically
+        run: node scripts/archive-completed-branches.mjs

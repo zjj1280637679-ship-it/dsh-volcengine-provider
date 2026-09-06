@@ -1,0 +1,74 @@
+{
+  "branches": [
+    {
+      "merged": true,
+      "name": "adapter-v0.1",
+      "sha": "162332cc856d2f13fd26eebc352a4c0cefb0b0bd",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "bootstrap-v0.1",
+      "sha": "73f873b239ab978f372f0ef1a84a1f14db23fba1",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "config-ui-v0.1",
+      "sha": "3ed47e7b327935ee0cff0ccfe684386edbe7d0d1",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "fix/alpha10-reliability-ui",
+      "sha": "fcbd472db69b4c3f02333f0c7326029d7ed92991",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "live-coding-plan-v0.1",
+      "sha": "42d8fd8721b78b02b16f7b5c245c2d7cee05b625",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "media-input-v0.1",
+      "sha": "b5c3925563bea6a4ce1bd0cb6aa05b26df9738e8",
+      "unmergedPaths": []
+    },
+    {
+      "merged": true,
+      "name": "media-live-v0.1",
+      "sha": "1a4a522ad58cc27b9e453fed545631ec977e242e",
+      "unmergedPaths": []
+    },
+    {
+      "merged": false,
+      "name": "review/devils-advocate-live-20260906",
+      "sha": "75b0725bc79d6e7b7f267b9ff217add5d9c0f5f5",
+      "unmergedPaths": [
+        ".github/workflows/review-live-2026-09-06.yml",
+        "scripts/review-live-2026-09-06.mjs"
+      ]
+    },
+    {
+      "merged": false,
+      "name": "test-credentials-v0.1",
+      "sha": "03b2ec222d80838047f3df3c828060b818178f5c",
+      "unmergedPaths": [
+        ".github/workflows/test-credential-availability.yml"
+      ]
+    }
+  ],
+  "date": "2026-09-06",
+  "releaseCommit": "f8c55db2770e6577a720aa873b93edeca9656a55",
+  "releaseTag": "v0.1.0-alpha.10",
+  "repository": "zjj1280637679-ship-it/dsh-volcengine-provider",
+  "supersededPullRequests": [
+    2,
+    3,
+    4,
+    5,
+    6
+  ]
+}
