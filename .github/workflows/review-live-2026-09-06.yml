@@ -1,0 +1,34 @@
+name: Bounded alpha.9 adversarial live review
+on:
+  push:
+    branches: [review/devils-advocate-live-20260906]
+    paths:
+      - .github/workflows/review-live-2026-09-06.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Seven bounded requests with unset modalities
+        env:
+          ARK_CODING_PLAN_API_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY }}
+        run: node scripts/review-live-2026-09-06.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alpha9-live-review
+          path: live-review-results.json
+          if-no-files-found: warn
+          retention-days: 14
