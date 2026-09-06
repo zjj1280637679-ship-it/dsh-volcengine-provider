@@ -239,7 +239,7 @@ try {
   })
 
   for (const [model, expected] of [
-    ['truncated-sse', 'STREAM_CLOSED'], ['socket-disconnect', null],
+    ['truncated-sse', 'TRANSPORT'], ['socket-disconnect', 'TRANSPORT'],
     ['bad-json', 'MALFORMED_RESPONSE'], ['bad-sse-json', 'MALFORMED_RESPONSE'],
     ['http-429', 'RATE_LIMIT'], ['http-503', 'SERVER'], ['http-413', 'INVALID_REQUEST'], ['redirect', null],
   ]) {

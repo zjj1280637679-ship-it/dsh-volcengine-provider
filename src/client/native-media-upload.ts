@@ -600,14 +600,19 @@ export class NativeMediaDraftBridge {
         const state = recovery.input.state.getSnapshot()
         const marker = nativeMediaMarkerIds(state.draft, true).find(item => {
           if (!recovery.ready.has(item.bundleId) || recovery.suppressed.has(item.bundleId)) return false
-          return !state.occurrences.some(row => row.source === NATIVE_MEDIA_REFERENCE_SOURCE
-            && row.ref === item.bundleId && row.offset === item.start
-            && row.length === item.end - item.start)
+          // Clipboard text inside any existing chip belongs to its source.
+          return !state.occurrences.some(row => row.offset < item.end
+            && row.offset + row.length > item.start)
         })
         if (marker === undefined) break
         const row = recovery.ready.get(marker.bundleId)!
+        // InputState uses expanded clipboard coordinates; insertReference uses
+        // detect coordinates, where every existing chip occupies one character.
+        const expansion = state.occurrences.reduce((total, item) => (
+          item.offset + item.length <= marker.start ? total + item.length - 1 : total
+        ), 0)
         if (!recovery.input.insertReference(this.reference(row.label, row.bundleId), {
-          start: marker.start, end: marker.end, draftRev: state.draftRev,
+          start: marker.start - expansion, end: marker.end - expansion, draftRev: state.draftRev,
         })) break
       }
       recovery.previous = recovery.input.state.getSnapshot()

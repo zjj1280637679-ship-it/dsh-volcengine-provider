@@ -1,7 +1,10 @@
-import { expect, it } from 'vitest'
+// @vitest-environment jsdom
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { expect, it, vi } from 'vitest'
 
-import { pluginSettingsProviders } from '../../src/client/PluginSettingsCard.js'
-import type { SettingsDescribeValue } from '../../src/client/operations.js'
+import { pluginSettingsProviders, VolcenginePluginSettingsCard } from '../../src/client/PluginSettingsCard.js'
+import type { CardOperations, SettingsDescribeValue } from '../../src/client/operations.js'
 
 function description(routes: Record<string, unknown>): SettingsDescribeValue {
   return {
@@ -36,4 +39,91 @@ it('shows only the routes present in a partial rc.2 profile', () => {
     displayName: 'Coding only',
     settingsPath: ['routes', 'coding-plan'],
   })])
+})
+
+it('identifies all three routes in visible headings and saves different cards in sequence without losing either draft', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const current = description({
+    standard: { kind: 'standard', models: [{ id: 'standard-model' }] },
+    'agent-plan': { kind: 'agent-plan', models: [{ id: 'agent-model' }] },
+    'coding-plan': { kind: 'coding-plan', models: [{ id: 'coding-model' }] },
+  })
+  const revisions: number[] = []
+  const operations: CardOperations = {
+    read: async () => structuredClone(current),
+    describeCredential: async () => ({ configured: true, writable: true }),
+    saveCredential: vi.fn(async () => {}),
+    saveSettings: async (_ns, ops, revision) => {
+      const namespace = current.namespaces[0]
+      expect(revision).toBe(namespace.revision)
+      revisions.push(revision)
+      const value = namespace.value as { routes: Record<string, Record<string, unknown>> }
+      for (const op of ops) {
+        const target = value.routes[op.path[1]]
+        if (op.op === 'set') target[op.path[2]] = op.value
+        else delete target[op.path[2]]
+      }
+      namespace.revision++
+      return structuredClone(namespace)
+    },
+  }
+  try {
+    await act(async () => root.render(createElement(VolcenginePluginSettingsCard, { operations })))
+    const cards = [...container.querySelectorAll('section')]
+    expect([...container.querySelectorAll('h3')].map(node => node.textContent)).toEqual([
+      '火山方舟 · 普通 API', '火山方舟 · Agent Plan', '火山方舟 · Coding Plan',
+    ])
+    expect(cards[0].textContent).toContain('https://ark.cn-beijing.volces.com/api/v3')
+    expect(cards[1].textContent).toContain('https://ark.cn-beijing.volces.com/api/plan/v3')
+    expect(cards[2].textContent).toContain('https://ark.cn-beijing.volces.com/api/coding/v3')
+    for (const [index, id] of ['standard-edited', 'agent-edited'].entries()) {
+      await act(async () => {
+        cards[index].querySelector<HTMLElement>('.ark-model-summary')!.click()
+        const model = cards[index].querySelector<HTMLInputElement>('[aria-label="模型 ID"]')!
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(model, id)
+        model.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    for (const card of cards.slice(0, 2)) {
+      expect(card.textContent).toContain('有未保存修改')
+      await act(async () => [...card.querySelectorAll('button')]
+        .find(button => button.textContent === '保存方舟配置')!.click())
+      expect(card.querySelector('[role="alert"]')).toBeNull()
+      expect(card.textContent).toContain('已保存，后续请求使用新配置。')
+    }
+    expect(revisions).toEqual([1, 2])
+    expect(current.namespaces[0].value).toMatchObject({ routes: {
+      standard: { models: [{ id: 'standard-edited' }] },
+      'agent-plan': { models: [{ id: 'agent-edited' }] },
+    } })
+    expect(operations.saveCredential).not.toHaveBeenCalled()
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
+
+it('provides a retry after the outer Plugins card fails to load', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const operations: CardOperations = {
+    read: vi.fn().mockRejectedValueOnce(new Error('连接暂时中断'))
+      .mockResolvedValue(description({ 'coding-plan': { kind: 'coding-plan', models: [] } })),
+    describeCredential: async () => undefined,
+    saveSettings: vi.fn(), saveCredential: vi.fn(),
+  }
+  try {
+    await act(async () => root.render(createElement(VolcenginePluginSettingsCard, { operations })))
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('连接暂时中断')
+    await act(async () => container.querySelector('button')!.click())
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('h3')?.textContent).toBe('火山方舟 · Coding Plan')
+    expect(container.textContent).toContain('尚未添加模型')
+  } finally {
+    await act(async () => root.unmount())
+  }
 })

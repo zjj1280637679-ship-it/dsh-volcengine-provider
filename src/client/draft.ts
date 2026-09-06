@@ -70,7 +70,8 @@ export function validateModels(models: readonly DraftModelCard[]): string | unde
   return undefined
 }
 
-function jsonEqual(left: unknown, right: unknown): boolean {
+/** Compare JSON-shaped settings without depending on object member order. */
+export function jsonEqual(left: unknown, right: unknown): boolean {
   if (left === right) return true
   if (Array.isArray(left) && Array.isArray(right)) {
     return left.length === right.length && left.every((value, index) => jsonEqual(value, right[index]))

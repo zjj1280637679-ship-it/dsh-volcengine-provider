@@ -40,6 +40,11 @@ function deferred<T>() {
 async function change(label: string, value: string): Promise<void> {
   await act(async () => {
     const element = input(label)
+    const details: HTMLDetailsElement[] = []
+    for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement && !parent.open) details.unshift(parent)
+    }
+    for (const row of details) row.querySelector('summary')!.click()
     const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype
       : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value)
@@ -91,17 +96,58 @@ function setup(emptyModels = false) {
   return { props, operations, saveSettings, saveCredential, readView: () => view }
 }
 
+function modelOps(fixture: ReturnType<typeof setup>, call = 0): SettingsPathOpView[] {
+  return fixture.saveSettings.mock.calls[call][1].filter(op => op.path.at(-1) === 'models')
+}
+
 describe('Volcengine Models card', () => {
+  it('keeps model details collapsed, searches by ID or name, and preserves the selected row when another row is removed', async () => {
+    const fixture = setup()
+    fixture.readView().value = { routes: { standard: { kind: 'standard', models: [
+      { id: 'seed-one', name: '主模型' },
+      { id: 'flash-two', modalities: { video: 'force_disable' } },
+      { id: 'third' }, { id: 'fourth' }, { id: 'fifth' },
+    ] } } }
+    await act(async () => root.render(createElement(VolcengineCard, fixture.props)))
+    expect(container.querySelector('h3')).toBeNull()
+    const rows = [...container.querySelectorAll<HTMLDetailsElement>('.ark-model-row')]
+    expect(rows).toHaveLength(5)
+    expect(rows.every(row => !row.open)).toBe(true)
+    expect(rows[0].querySelector('summary')?.textContent).toContain('主模型')
+    expect(rows[0].querySelector('summary')?.textContent).toContain('seed-one')
+    expect(rows[1].querySelector('summary')?.textContent).toContain('视频：强制关闭')
+    const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存方舟配置')!
+    expect(save.disabled).toBe(true)
+    await change('搜索模型', '主模型')
+    expect(container.querySelectorAll('.ark-model-row')).toHaveLength(1)
+    await change('搜索模型', 'FLASH')
+    expect(container.querySelectorAll('.ark-model-row')).toHaveLength(1)
+    expect(container.querySelector('.ark-model-summary')?.textContent).toContain('flash-two')
+    await change('搜索模型', '')
+    const restored = [...container.querySelectorAll<HTMLDetailsElement>('.ark-model-row')]
+    await act(async () => {
+      restored[0].querySelector<HTMLElement>('summary')!.click()
+      restored[1].querySelector<HTMLElement>('summary')!.click()
+    })
+    expect(restored[1].open).toBe(true)
+    await click('移除模型 1')
+    const remaining = container.querySelector<HTMLDetailsElement>('.ark-model-row')!
+    expect(remaining.querySelector('summary')?.textContent).toContain('flash-two')
+    expect(remaining.open).toBe(true)
+    expect(container.textContent).toContain('有未保存修改')
+  })
+
   it('creates the first model manually and preserves JSON member names as editable text', async () => {
     const fixture = setup(true)
     await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
     await change('API Key', 'temporary-test-key')
     await click('添加模型')
+    expect(container.querySelector<HTMLDetailsElement>('.ark-model-row')?.open).toBe(true)
     await change('模型 ID', 'user-chosen-model')
     const rawBody = '{ "__proto__": { "custom": true }, "thinking": { "type": "disabled" } }'
     await change('自定义请求体 JSON', rawBody)
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'user-chosen-model', customBody: rawBody,
     }] }])
     expect(input('自定义请求体 JSON').value).toBe(rawBody)
@@ -122,11 +168,14 @@ describe('Volcengine Models card', () => {
     await change('自定义请求体 JSON', '{"thinking":{"type":"enabled"},"vendor_extra":true}')
     await click('保存方舟配置')
     expect(fixture.saveSettings).toHaveBeenCalledOnce()
-    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'manual-new-id', futureModelOption: { keep: true }, modalities: { video: 'force_enable' },
       contextWindow: 131072, customBody: '{"thinking":{"type":"enabled"},"vendor_extra":true}',
     }] }])
-    expect(fixture.saveCredential).toHaveBeenCalledWith('ARK_STANDARD_API_KEY', 'temporary-test-key')
+    const storedRef = fixture.saveCredential.mock.calls[0][0]
+    expect(storedRef).toMatch(/^DSH_VOLCENGINE_KEY_[A-F0-9]{32}$/)
+    expect(fixture.saveCredential).toHaveBeenCalledWith(storedRef, 'temporary-test-key')
+    expect(fixture.readView().value).toMatchObject({ routes: { standard: { apiKeyEnv: storedRef } } })
     expect(fixture.readView().value).toMatchObject({
       futureNamespaceOption: 'keep', routes: { standard: { futureRouteOption: 'keep' } },
     })
@@ -147,21 +196,23 @@ describe('Volcengine Models card', () => {
     expect(fixture.saveCredential).not.toHaveBeenCalled()
   })
 
-  it('retries a failed credential write using the committed settings revision and retaining the draft key', async () => {
+  it('retains both drafts after a credential failure and publishes settings only after a successful retry', async () => {
     const fixture = setup()
     fixture.saveCredential.mockRejectedValueOnce(new Error('密钥未保存，请保留当前页面并重试。'))
     await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
     await change('API Key', 'temporary-test-key')
     await change('模型 ID', 'first-edit')
     await click('保存方舟配置')
-    expect(fixture.saveSettings).toHaveBeenCalledOnce()
+    expect(fixture.saveSettings).not.toHaveBeenCalled()
+    expect(fixture.readView().value).toMatchObject({ routes: { standard: { models: [{ id: 'my-model' }] } } })
     expect(input('API Key').value).toBe('temporary-test-key')
     expect(container.querySelector('[role="alert"]')?.textContent)
-      .toBe('配置已保存，但密钥未保存。请保留当前页面并重试保存密钥。')
+      .toBe('密钥未保存，请保留当前页面并重试。')
     expect(container.querySelector('[role="status"]')).toBeNull()
     await change('模型 ID', 'second-edit')
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[1][2]).toBe(8)
+    expect(fixture.saveSettings).toHaveBeenCalledOnce()
+    expect(fixture.saveSettings.mock.calls[0][2]).toBe(7)
     expect(fixture.saveCredential).toHaveBeenCalledTimes(2)
     expect(input('API Key').value).toBe('')
     expect(container.textContent).toContain('已保存')
@@ -226,7 +277,8 @@ describe('Volcengine Models card', () => {
         kind: 'standard', apiKeyEnv: 'ARK_STANDARD_API_KEY', models: [{ id: 'old-committed-edit' }],
       } } }
       await act(async () => pendingSave.resolve(committed))
-      expect(fixture.saveCredential).not.toHaveBeenCalled()
+      expect(fixture.saveCredential).toHaveBeenCalledOnce()
+      expect(fixture.saveCredential.mock.calls[0][1]).toBe('temporary-old-key')
       expect(input('模型 ID').value).toBe(kind === 'path' ? 'coding-model' : 'my-model')
       expect(input('密钥引用名称').value).toBe(kind === 'path' ? 'ARK_CODING_PLAN_API_KEY' : 'ARK_STANDARD_API_KEY')
       expect(container.querySelector('[role="alert"]')).toBeNull()
@@ -234,7 +286,7 @@ describe('Volcengine Models card', () => {
     },
   )
 
-  it('does not start a settings or credential write after unmount during credential validation', async () => {
+  it('finishes an accepted save after unmount during credential validation without updating the detached card', async () => {
     const fixture = setup()
     await act(async () => { root.render(createElement(VolcengineCard, fixture.props)) })
     await change('API Key', 'temporary-test-key')
@@ -244,8 +296,10 @@ describe('Volcengine Models card', () => {
     await click('保存方舟配置')
     await act(async () => { root.unmount() })
     await act(async () => pending.resolve(undefined))
-    expect(fixture.saveSettings).not.toHaveBeenCalled()
-    expect(fixture.saveCredential).not.toHaveBeenCalled()
+    expect(fixture.saveSettings).toHaveBeenCalledOnce()
+    expect(fixture.saveCredential).toHaveBeenCalledOnce()
+    expect(fixture.readView().value).toMatchObject({ routes: { standard: { models: [{ id: 'pending-edit' }] } } })
+    expect(container.textContent).toBe('')
     root = createRoot(container)
   })
 
@@ -285,13 +339,13 @@ describe('Volcengine Models card', () => {
     await change('图片输入', 'inherit')
     await change('音频输入', 'inherit')
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'my-model', futureModelOption: { keep: true }, modalities: { video: 'force_disable' },
     }] }])
     await change('API Key', 'temporary-test-key')
     await change('视频输入', 'inherit')
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[1][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture, 1)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'my-model', futureModelOption: { keep: true },
     }] }])
   })
@@ -306,7 +360,7 @@ describe('Volcengine Models card', () => {
     await change('API Key', 'temporary-test-key')
     await change('智能体媒体续链预算', '12.5')
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'my-model', futureModelOption: { keep: true }, agentMediaFallbackMB: 12.5,
     }] }])
   })
@@ -320,7 +374,7 @@ describe('Volcengine Models card', () => {
     await change('API Key', 'temporary-test-key')
     await change('模型 ID', 'renamed-model')
     await click('保存方舟配置')
-    expect(fixture.saveSettings.mock.calls[0][1]).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
+    expect(modelOps(fixture)).toEqual([{ op: 'set', path: ['routes', 'standard', 'models'], value: [{
       id: 'renamed-model', modalities: { image: 'inherit', audio: 'force_enable' },
     }] }])
   })

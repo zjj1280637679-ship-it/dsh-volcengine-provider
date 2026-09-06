@@ -1,12 +1,12 @@
 # dsh-volcengine-provider
 
-DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
+DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.10` 预发布版本。提供普通 API、Agent Plan、Coding Plan 三张独立供应商卡片，以及手动模型配置。
 
 **建设积极自由，同时不干涉消极自由。** 供应商反馈用于辅助选择；模型、输入模态、请求参数由用户决定。反馈不自动改写配置，不生成模型白名单或调用限制。
 
 ## 最小配置
 
-在新版 Harness 的 Models 设置页、或 `0.1.1-rc.2` 的 Plugins 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
+在新版 Harness 的 Models 设置页、或 `0.1.1-rc.2` 的 Plugins 设置页打开对应方舟卡片，填写**该通道的 API Key 和至少一个模型 ID**，点击**“保存方舟配置”**，保存后即可在模型列表中选择。模型以摘要卡展示，展开后编辑 ID、模态与自定义请求体；三条通道显示各自名称、地址和凭据状态。已有环境凭据时不用重复填写密钥。插件启动、打开卡片和列出手动模型都不触发方舟请求。
 
 本次选定的 lite／flash 模型另有 [Coding Plan 最小媒体配置](examples/coding-plan-media.yml)。示例只填写用户选择的模型 ID，刻意不预填任何模态；未设置表示未知且允许尝试，不代表插件判断模型支持或不支持某种输入。
 
@@ -19,6 +19,8 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 预�
 [火山方舟的 DeepSeek Harness 专项文档](https://console.volcengine.com/ark/region:cn-beijing/docs/82379/2637930?lang=zh)明确把 OpenAI Chat Completions、`/api/coding/v3` 和 `ark-code-latest` 列为 Coding Plan 的可用组合。Coding Plan 密钥不要配到普通 `/api/v3`：该地址属于按量计费通道，不会消耗 Coding Plan 套餐额度。
 
 三条通道分别保存地址、密钥引用和模型列表。适配器每次只发送一次请求，不内置重试或跨通道回退；上层 Harness 的重试策略仍由宿主管理。地址可以在高级配置中修改；表中地址是插件默认值，实际服务是否接受请求需真实联调确认。
+
+保存新密钥时，插件先写入 Harness 的独立凭据引用，再用 namespace revision 一次发布地址与引用。其他通道的并发修改可安全重基；同一通道发生变化会保留草稿并报告冲突。保存开始后切换页面不取消已启动的保存操作。已有环境变量或手动凭据引用仍可使用；同时更改引用名和填写新密钥时，需要分两次明确操作。
 
 每个模型的高级配置包括：
 
@@ -33,7 +35,7 @@ DeepSeek Harness 的火山方舟供应商插件，当前为 `0.1.0-alpha.9` 预�
 
 ## 本地构建与安装
 
-在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 获取完整开发分支、安装并完成最小验收。
+本次修复、取舍与验收范围见 [alpha.10 发布说明](docs/releases/alpha.10.md)。在自己电脑接手，请按 [本机接手指南](docs/local-handoff.md) 获取完整开发分支、安装并完成最小验收。
 
 需要 Node.js `^22.19.0 || >=24.0.0`、本仓库声明的 pnpm，以及已安装的 Harness CLI。
 
@@ -43,7 +45,7 @@ pnpm run typecheck
 pnpm test
 pnpm run build
 npm pack
-dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.9.tgz
+dsh plugin --profile web add ./dsh-volcengine-provider-0.1.0-alpha.10.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -52,15 +54,15 @@ dsh --profile web
 
 从 GitHub commit 直接安装时，包的 `prepare` 会构建 TypeScript；pnpm 10 及以上要求用户在该 profile 明确授权 git 依赖的构建脚本。无需授予构建权限的交付路径仍是上面的预编译 `.tgz`。
 
-这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.9` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.9) 的预编译 `.tgz` 为准；默认分支、版本标签和 Release 附件均应指向同一候选提交。
+这是 GitHub alpha 预发布流程；`private: true` 保留，因此不会发布到 npm。正式安装以 [`v0.1.0-alpha.10` Release](https://github.com/zjj1280637679-ship-it/dsh-volcengine-provider/releases/tag/v0.1.0-alpha.10) 的预编译 `.tgz` 为准；默认分支、版本标签和 Release 附件均应指向同一候选提交。
 
 ## 已实现与验证边界
 
-- Chat adapter 仅实现 OpenAI-compatible Chat Completions，支持请求序列化、SSE 和非流式 JSON 回复、文本／推理／工具调用／用量转换；HTTP 错误保留结构化事实。Responses 与 Anthropic Messages 是不同 wire protocol，本版本不以换路径冒充支持。
+- Chat adapter 仅实现 OpenAI-compatible Chat Completions，支持请求序列化、SSE 和非流式 JSON 回复、文本／推理／工具调用／用量转换；HTTP 与流内错误使用一致的语义分类，并保留 request ID；断网与流中断按 TRANSPORT 报告，取消保持取消。畸形工具调用不能伪装成成功完成。Responses 与 Anthropic Messages 是不同 wire protocol，本版本不以换路径冒充支持。
 - Cordis 插件注册供应商目录、模型目录、设置 namespace 和凭据引用；保存配置与轮换密钥作用于后续请求。
 - Web 卡片在新版宿主使用官方 Models slot 与 namespaced Remotes，在 `0.1.1-rc.2` 使用稳定的 Plugins slot 与 `connection.api`；两条路径共用同一表单，支持本地草稿、JSON 校验、保存失败提示、重新载入和通道停用。
 - 模型发现保留丰富原始 Feedback；当前自定义卡片以手动模型为入口，尚无丰富反馈查看器。
-- 本地验证覆盖 Fake Ark HTTP、Cordis/LLM 宿主组合、设置热更新及卡片组件。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 还曾在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成隔离实例验证；那是 [alpha.7 前的历史记录](docs/harness-web-loop-2026-09-06.md)，不能替代当前 `alpha.9` 的唯一实例与冷重启验收。
+- 自动验证覆盖 Fake Ark HTTP、真实 SessionInputShell 的多次附件选择与草稿恢复、设置竞态及卡片交互；发布流程在 Linux / Windows 检查实际 tarball 的 Loader 启动、官方文件设置持久化和两个独立 Node 进程的文本请求。2026-09-05 的真实 Coding Plan 测试中，`doubao-seed-2.0-lite` 与 `glm-5.3-flash` 均经生产适配器返回 HTTP 200、SSE 和 `OK`；详见 [运行记录](docs/live-coding-plan-2026-09-05.md)。2026-09-06 还曾在固定的 Harness `0.1.3-alpha.1` 源码宿主中完成隔离实例验证；那是 [alpha.7 前的历史记录](docs/harness-web-loop-2026-09-06.md)，不能替代当前 `alpha.10` 的实机唯一实例与桌面浏览器验收。
 - 历史真实媒体测试中，flash 图片与原始 MP4 的输出通过内容检查；lite 图片可读，但把正方形称为矩形，严格形状检查未通过；lite 音频被当前 Coding Plan 通道以 HTTP 400 拒绝。发送侧的媒体字节均保持一致，但这只能证明 raw MP4 到 API 的链路与时序输出，不能证明供应商内部未抽帧或等同于 Seed 的原生视频处理，见 [真实媒体报告](docs/live-coding-plan-media-2026-09-05.md)。
 
 `alpha.9` 把媒体入口收敛为 Harness 原生输入栏中、原有附件按钮旁边的一个彩色 `+`。它没有独立问题框、MIME 框或发送按钮：用户一次可选择多个方舟 Chat 支持的原图、原视频或原音频，附件显示为原生引用 chip，问题仍写在 Harness 主输入框，并由原生发送键、Enter、排队或插话路径提交。插件借用 Harness 的 `conversation.input.left`、输入引用 codec 和原生 `Session.prompt` 接口，因此文本与媒体只形成一条用户消息，而不是两套会话。
@@ -81,6 +83,6 @@ dsh --profile web
 
 宿主兼容按公共能力判断，不按 `@deepseek-ai/dsh-*` 的预发布版本号判断。这些模块由 Harness 安装的依赖闭包提供，发布包不会把某一周的宿主组件写成 peer 版本锁，也不会私带一份旧宿主实现；`devDependencies` 中的精确版本只用于可复现编译和测试。当前适配器核心、模型目录、模型发现、设置挂载、UI 插槽和媒体入口分别探测：可选能力缺失时只停用对应界面或入口，核心 LLM 接口缺失时插件显式告警并保持宿主可启动。媒体上传代次优先订阅新版公开的 `connection.generation`，并兼容旧版公开的 `connection.hostDescription`；两者都不存在就不挂载入口，避免重连后误用旧上传。ABI 门禁同时检查这些 client 类型与方法结构。此策略覆盖经过验证的同一公共接口族，不承诺未知破坏性版本或未来 major 自动兼容。
 
-源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.9` 额外兼容 Harness `0.1.1-rc.2`：Models 页保留宿主的通用供应商行，已配置通道的高级方舟卡片改在 Plugins 页挂载；供应商注册、热配置、凭据状态、文本以及彩色 `+` 原始多媒体旁路均按公共能力挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
+源码设计与完整宿主验收基线均为 DeepSeek Harness [`d347e703908d0406b7a7ef80e3a0e594d86b2215`](https://github.com/deepseek-ai/deepseek-harness/tree/d347e703908d0406b7a7ef80e3a0e594d86b2215)（`dsh-v0.1.3-alpha.1`）；可安装组件验证还覆盖 npm `0.1.2-rc.1`。`0.1.0-alpha.10` 额外兼容 Harness `0.1.1-rc.2`：Models 页保留宿主的通用供应商行，已配置通道的高级方舟卡片改在 Plugins 页挂载；供应商注册、热配置、凭据状态、文本以及彩色 `+` 原始多媒体旁路均按公共能力挂载。兼容声明与已验证版本分别记录，未验证的升级不等于通过验收。
 
 设计资料：[第一阶段基本闭环](docs/phase1-basic-loop-2026-09-05.md) · [自由度合同](docs/design-contract.md) · [验证环境](docs/verification-environment.md) · [第三步适配器](docs/step3-adapter-plan.md) · [第四步配置与 UI](docs/step4-configuration.md) · [第五步媒体输入](docs/step5-media-input.md) · [历史隔离闭环](docs/harness-web-loop-2026-09-06.md)

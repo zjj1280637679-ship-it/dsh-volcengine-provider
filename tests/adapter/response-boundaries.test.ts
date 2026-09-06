@@ -1,5 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createUserMessage, LlmError, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { BlockAssembler, createUserMessage, LlmError, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { VolcengineChatAdapter } from '../../src/chat/adapter.js'
@@ -152,6 +152,80 @@ describe('basic response boundary contracts', () => {
       })
     }
   })
+
+  it.each([
+    { name: 'empty identity', calls: [{ index: 0, id: '', function: { name: '', arguments: '{}' } }] },
+    { name: 'whitespace identity', calls: [{ index: 0, id: ' ', function: { name: 'tool', arguments: '{}' } }] },
+    { name: 'duplicate id', calls: [
+      { index: 0, id: 'same', function: { name: 'first', arguments: '{}' } },
+      { index: 1, id: 'same', function: { name: 'second', arguments: '{}' } },
+    ] },
+    { name: 'tool finish without a call', calls: [] },
+  ])('rejects a successful $name before closing tools in either response mode', async ({ calls }) => {
+    for (const response of [
+      translateSsePayloads(payloads([{ choices: [streamChoice({ tool_calls: calls }, 'tool_calls')] }, '[DONE]'])),
+      translateCompletion({ choices: [{ index: 0, message: { tool_calls: calls }, finish_reason: 'tool_calls' }] }),
+    ]) {
+      const chunks: StreamChunk[] = []
+      await expect((async () => {
+        for await (const chunk of response) chunks.push(chunk)
+      })()).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+      expect(chunks.some(chunk => chunk.type === 'block-end' || chunk.type === 'finish')).toBe(false)
+    }
+  })
+
+  it('rejects a streamed tool whose identity never arrives, including a stop terminal', async () => {
+    await expect(collect(translateSsePayloads(payloads([
+      { choices: [streamChoice({ tool_calls: [{ index: 0, function: { arguments: '{}' } }] }, 'stop')] },
+      '[DONE]',
+    ])))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
+  it.each(['id', 'name'] as const)('rejects a conflicting tool %s within the same index', async field => {
+    await expect(collect(translateSsePayloads(payloads([
+      { choices: [streamChoice({ tool_calls: [{
+        index: 0, id: 'call-one', function: { name: 'first', arguments: '{"x":' },
+      }] })] },
+      { choices: [streamChoice({ tool_calls: [{
+        index: 0, id: field === 'id' ? 'call-two' : 'call-one',
+        function: { name: field === 'name' ? 'second' : 'first', arguments: '1}' },
+      }] }, 'tool_calls')] },
+      '[DONE]',
+    ])))).rejects.toMatchObject({ code: 'MALFORMED_RESPONSE' })
+  })
+
+  it('preserves delayed identities, repeated identities and interleaved argument fragments', async () => {
+    const chunks = await collect(translateSsePayloads(payloads([
+      { choices: [streamChoice({ tool_calls: [
+        { index: 0, function: { arguments: '{"a":' } },
+        { index: 1, id: 'call-two', function: { name: 'second', arguments: '{"b":' } },
+      ] })] },
+      { choices: [streamChoice({ tool_calls: [
+        { index: 1, id: 'call-two', function: { name: 'second', arguments: '2}' } },
+        { index: 0, id: '', function: { name: null, arguments: '1' } },
+      ] })] },
+      { choices: [streamChoice({ tool_calls: [
+        { index: 0, id: 'call-one', function: { name: 'first', arguments: '}' } },
+      ] }, 'tool_calls')] },
+      '[DONE]',
+    ])))
+    expect(chunks.filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)).toEqual([
+      { type: 'tool-call', id: 'call-one', name: 'first', arguments: '{"a":1}' },
+      { type: 'tool-call', id: 'call-two', name: 'second', arguments: '{"b":2}' },
+    ])
+    expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } })
+  })
+
+  it('leaves max-token truncation of an unfinished call to the Harness assembler', async () => {
+    const assembler = new BlockAssembler()
+    const chunks = await collect(translateSsePayloads(payloads([
+      { choices: [streamChoice({ content: 'partial answer', tool_calls: [{ index: 0, function: { arguments: '{' } }] }, 'length')] },
+      '[DONE]',
+    ])))
+    for (const chunk of chunks) assembler.push(chunk)
+    expect(assembler.finish).toEqual({ kind: 'max-tokens' })
+    expect(assembler.blocks()).toEqual([{ type: 'text', text: 'partial answer' }])
+  })
 })
 
 let fake: FakeArk | undefined
@@ -192,10 +266,58 @@ describe('actual Harness failure boundary over local HTTP', () => {
       type: 'finish',
       reason: {
         kind: 'error',
-        failure: { code: 'PROVIDER_ERROR', message: expect.stringContaining('ark_after_partial generation failed') },
+        failure: { code: 'PROVIDER_ERROR', status: 200, message: expect.stringContaining('ark_after_partial generation failed') },
       },
     }])
     expect(fake.requests).toHaveLength(1)
     expect(fake.requests[0]!.json).toMatchObject({ n: 2, future_unknown: { untouched: true } })
+  })
+
+  it.each([
+    { code: 'context_length_exceeded', message: 'maximum context length exceeded', status: 400, expected: 'CONTEXT_WINDOW_EXCEEDED' },
+    { code: 'insufficient_quota', message: 'account quota exhausted', status: 429, expected: 'QUOTA' },
+    { code: 'RateLimitExceeded.EndpointRPMExceeded', message: 'endpoint request limit reached', status: 429, expected: 'RATE_LIMIT' },
+  ])('keeps $code diagnostic facts consistent for HTTP errors, JSON and SSE', async ({ code, message, status, expected }) => {
+    fake = await startFakeArk()
+    const adapter = new VolcengineChatAdapter({
+      resolveConnection: () => ({
+        route: { kind: 'coding-plan', baseUrl: fake!.baseUrl, apiKeyEnv: 'TEST' },
+        apiKey: 'synthetic-test-key',
+      }),
+    })
+    for (const mode of ['http', 'json', 'sse']) {
+      const errorBody = JSON.stringify({ error: { code, message } })
+      fake.enqueueResponse({
+        status: mode === 'http' ? status : 200,
+        headers: {
+          'content-type': mode === 'sse' ? 'text/event-stream' : 'application/json',
+          'x-request-id': 'known-request', 'retry-after': '2',
+        },
+        body: mode === 'sse' ? `data: ${errorBody}\n\n` : errorBody,
+      })
+      await expect(collect(adapter.stream({ provider: 'ark-test', model: 'manual', messages: [] })))
+        .rejects.toMatchObject({
+          code: expected,
+          failure: {
+            code: expected, status: mode === 'http' ? status : 200,
+            requestId: 'known-request', providerRetryAfterMs: 2000,
+            message: expect.stringContaining(message),
+          },
+        })
+    }
+    expect(fake.requests).toHaveLength(3)
+  })
+
+  it('retains the log-id fallback for an unknown in-band failure without inventing an error category', async () => {
+    fake = await startFakeArk()
+    fake.enqueueResponse({
+      headers: { 'content-type': 'application/json', 'x-request-id': '', 'x-tt-logid': 'fallback-log-id' },
+      body: JSON.stringify({ error: { code: 'future_vendor_error', message: 'opaque provider diagnostic' } }),
+    })
+    const adapter = new VolcengineChatAdapter({
+      resolveConnection: () => ({ route: { kind: 'standard', baseUrl: fake!.baseUrl, apiKeyEnv: 'TEST' }, apiKey: 'synthetic' }),
+    })
+    await expect(collect(adapter.stream({ provider: 'ark-test', model: 'manual', messages: [] })))
+      .rejects.toMatchObject({ code: 'PROVIDER_ERROR', failure: { status: 200, requestId: 'fallback-log-id' } })
   })
 })

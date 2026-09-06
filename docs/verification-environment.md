@@ -1,5 +1,7 @@
 # 第二步验证环境：Fake Ark
 
+> 历史阶段记录：下文的测试数量、待办和当时入口只描述该阶段。当前安装、配置保存、自动识别文件类型和原生媒体入口以 [README](../README.md)、[alpha.10 发布说明](releases/alpha.10.md) 与 [本机接手指南](local-handoff.md) 为准。
+
 本文定义 v0.1 第二步的验证环境。目标不是模拟火山模型智能，而是证明 Provider 在真实 HTTP 边界前没有擅自删改请求、媒体或 Route。
 
 ## 1. 为什么先做 Fake Ark

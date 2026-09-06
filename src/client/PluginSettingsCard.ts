@@ -48,22 +48,28 @@ export function VolcenginePluginSettingsCard(
 ): ReactNode {
   const [providers, setProviders] = useState<ProviderCardDescriptor[]>()
   const [failure, setFailure] = useState<string>()
+  const [reload, setReload] = useState(0)
   useEffect(() => {
     let active = true
+    setFailure(undefined)
+    setProviders(undefined)
     void operations.read().then(description => {
       if (active) setProviders(pluginSettingsProviders(description))
     }).catch(error => {
       if (active) setFailure(error instanceof Error ? error.message : '方舟配置加载失败，请重试。')
     })
     return () => { active = false }
-  }, [operations])
+  }, [operations, reload])
 
-  if (failure !== undefined) return h('p', { role: 'alert' }, failure)
+  if (failure !== undefined) return h('div', null,
+    h('p', { role: 'alert' }, failure),
+    h('button', { type: 'button', onClick: () => setReload(current => current + 1) }, '重新加载方舟配置'))
   if (providers === undefined) return h('p', null, '正在加载方舟配置…')
   if (providers.length === 0) return h('p', null, '当前没有可配置的方舟通道。')
-  return h('div', { 'aria-label': '火山方舟供应商配置' }, ...providers.map(provider => h(VolcengineCard, {
+  return h('div', { 'aria-label': '火山方舟供应商配置', style: { display: 'grid', gap: '20px', minWidth: 0 } }, ...providers.map(provider => h(VolcengineCard, {
     key: provider.provider,
     provider,
     operations,
+    showHeader: true,
   })))
 }

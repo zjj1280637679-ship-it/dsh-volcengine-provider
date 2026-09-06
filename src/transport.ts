@@ -1,5 +1,6 @@
 import type { RequestBody } from './request-body.js'
 import { joinRouteUrl, type RouteProfile } from './routes.js'
+import { normalizeTransportError } from './chat/errors.js'
 
 export interface ArkTransportCommon {
   route: RouteProfile
@@ -32,14 +33,22 @@ function requestHeaders(
   return headers
 }
 
+async function fetchArk(request: ArkTransportCommon, init: RequestInit): Promise<Response> {
+  const fetchImpl = request.fetchImpl ?? globalThis.fetch
+  try {
+    return await fetchImpl(joinRouteUrl(request.route, request.operation), init)
+  } catch (cause) {
+    throw normalizeTransportError(cause, request.signal)
+  }
+}
+
 /**
  * One explicit provider attempt. This function intentionally performs no retry
  * and has no knowledge of any other Route, so a Coding Plan failure cannot
  * silently become a Standard Ark request.
  */
 export async function sendArkJson(request: ArkJsonRequest): Promise<Response> {
-  const fetchImpl = request.fetchImpl ?? globalThis.fetch
-  return fetchImpl(joinRouteUrl(request.route, request.operation), {
+  return fetchArk(request, {
     method: 'POST',
     headers: requestHeaders(request.apiKey, 'application/json', request.headers),
     body: JSON.stringify(request.body),
@@ -50,8 +59,7 @@ export async function sendArkJson(request: ArkJsonRequest): Promise<Response> {
 
 /** One-attempt authenticated GET, used for advisory model discovery only. */
 export async function sendArkGet(request: ArkTransportCommon): Promise<Response> {
-  const fetchImpl = request.fetchImpl ?? globalThis.fetch
-  return fetchImpl(joinRouteUrl(request.route, request.operation), {
+  return fetchArk(request, {
     method: 'GET',
     headers: requestHeaders(request.apiKey, undefined, request.headers),
     redirect: 'error',
@@ -64,8 +72,7 @@ export async function sendArkGet(request: ArkTransportCommon): Promise<Response>
  * not resize, transcode, sample, inspect, or otherwise transform the bytes.
  */
 export async function sendArkBytes(request: ArkBinaryRequest): Promise<Response> {
-  const fetchImpl = request.fetchImpl ?? globalThis.fetch
-  return fetchImpl(joinRouteUrl(request.route, request.operation), {
+  return fetchArk(request, {
     method: 'POST',
     headers: requestHeaders(request.apiKey, request.contentType, request.headers),
     body: Buffer.from(request.body),

@@ -76,6 +76,20 @@ it('passes original files together and leaves text submission to Harness', async
   expect(container.querySelectorAll('button')).toHaveLength(1)
 })
 
+it('announces active upload groups while keeping the one attachment picker available', async () => {
+  const ops = operations({ uploads: 2 })
+  await act(async () => root.render(createElement(MediaPlus, { operations: ops, session, input })))
+  const plus = container.querySelector('button') as HTMLButtonElement
+  expect(plus.disabled).toBe(false)
+  expect(plus.getAttribute('aria-label')).toBe('添加方舟媒体附件')
+  expect(plus.title).toContain('点击可继续添加')
+  const status = container.querySelector('[role="status"]')!
+  expect(status.textContent).toBe('正在上传 2 组附件…')
+  expect(plus.getAttribute('aria-describedby')).toBe(status.id)
+  expect(container.querySelectorAll('button')).toHaveLength(1)
+  expect(container.querySelector('textarea')).toBeNull()
+})
+
 it('surfaces picker failures through the native composer notice and respects its phase', async () => {
   const ops = operations()
   vi.mocked(ops.addFiles).mockRejectedValueOnce(new Error('unsupported media'))
@@ -91,5 +105,6 @@ it('surfaces picker failures through the native composer notice and respects its
     operations: ops, session, input: { phase: 'submitting' },
   })))
   expect((container.querySelector('button') as HTMLButtonElement).disabled).toBe(true)
+  expect((container.querySelector('button') as HTMLButtonElement).title).toBe('请先完成或取消当前输入操作')
   expect((container.querySelector('input') as HTMLInputElement).disabled).toBe(true)
 })

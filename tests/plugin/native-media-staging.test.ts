@@ -232,6 +232,49 @@ describe('durable native Ark media bundle staging', () => {
     await expect(staging.begin(request({ clientSubmissionId: 'not-the-bundle' }))).rejects.toThrow('request is invalid')
   })
 
+  it('allows only the claiming message to retire a bound bundle, including after restart', async () => {
+    const { root, staging } = await fixture()
+    await uploadAll(staging)
+    await staging.claim(SESSION, BUNDLE, 'owner-message')
+    expect(await staging.discard(SESSION, BUNDLE)).toBe(false)
+    expect(await staging.discardClaim(SESSION, BUNDLE, 'other-message')).toBe(false)
+    expect(await staging.status(SESSION, BUNDLE)).toMatchObject({ state: 'claimed', messageId: 'owner-message' })
+    await staging.dispose()
+
+    const restarted = new NativeMediaStaging(new OriginalMediaStore(root, { instanceId: 'b'.repeat(32) }))
+    expect(await restarted.discardClaim(SESSION, BUNDLE, 'owner-message')).toBe(true)
+    expect(await restarted.status(SESSION, BUNDLE)).toBeUndefined()
+    await expect(access(join(root, '.native-bundles', 'v1', `${BUNDLE}.json`))).rejects.toThrow()
+    await restarted.dispose()
+  })
+
+  it('does not accept a claim while draft retirement is awaiting disk cleanup', async () => {
+    const { root, store, staging } = await fixture()
+    await uploadAll(staging)
+    let entered!: () => void
+    let release!: () => void
+    const cleaning = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const discardPart = store.discardStaging.bind(store)
+    vi.spyOn(store, 'discardStaging').mockImplementation(async token => {
+      entered()
+      await gate
+      await discardPart(token)
+    })
+    const retiring = staging.discard(SESSION, BUNDLE)
+    await cleaning
+    try {
+      expect(await staging.claim(SESSION, BUNDLE, 'late-message')).toBeUndefined()
+    } finally {
+      release()
+      await retiring
+    }
+    await staging.dispose()
+    const restarted = new NativeMediaStaging(new OriginalMediaStore(root, { instanceId: 'b'.repeat(32) }))
+    expect(await restarted.list(SESSION)).toEqual([])
+    await restarted.dispose()
+  })
+
   it('requires complete sequential chunks per file and destroys a bundle whose bytes fail SHA verification', async () => {
     const { root, staging } = await fixture()
     const handle = await staging.begin(request())

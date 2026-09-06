@@ -58,6 +58,7 @@ export interface NativeMediaMergeStaging {
     signal?: AbortSignal,
   ): Promise<MaterializedNativeMediaBundle | undefined>
   confirm(sessionId: string, bundleId: string, messageId: string): Promise<boolean>
+  /** Retire only an unclaimed draft bundle; another message's claim stays intact. */
   discard(sessionId: string, bundleId: string, signal?: AbortSignal): Promise<boolean>
   discardClaim(
     sessionId: string,

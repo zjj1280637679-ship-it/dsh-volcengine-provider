@@ -7,7 +7,32 @@ import {
 } from '../../src/host-compat.js'
 import { settingsSectionMode } from '../../src/settings-compat.js'
 
+// This validates development fixture pins only; Host compatibility stays behavioral.
+const numericVersionPart = '(?:0|[1-9][0-9]*)'
+const prereleasePart = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+const exactSemver = new RegExp(
+  `^${numericVersionPart}(?:\\.${numericVersionPart}){2}`
+  + `(?:-${prereleasePart}(?:\\.${prereleasePart})*)?`
+  + '(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$',
+  'u',
+)
+function isExactSemver(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() === value && exactSemver.test(value)
+}
+
 describe('version-independent Host capability policy', () => {
+  it.each(['0.1.2-rc.1', '0.2.0', '1.0.0', '12.34.56-beta.2+build.007'])(
+    'accepts the exact development fixture version %s', version => {
+      expect(isExactSemver(version)).toBe(true)
+    },
+  )
+
+  it.each(['0.1.x', '0.1.2 || >=0.2', '^0.1.2', '~0.1.2', 'latest', '*', '01.2.3', '1.2.3-01', '1.2.3\n'])(
+    'rejects the unpinned or invalid development fixture version %s', version => {
+      expect(isExactSemver(version)).toBe(false)
+    },
+  )
+
   it('does not encode synchronized Harness prereleases as npm peer locks', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')) as {
       peerDependencies?: Record<string, string>
@@ -18,7 +43,7 @@ describe('version-independent Host capability policy', () => {
       .toEqual([])
     // Exact packages still belong in the development fixture; removing runtime
     // locks must not turn compilation into an unpinned network experiment.
-    expect(manifest.devDependencies?.['@deepseek-ai/dsh-llm']).toMatch(/^0\.1\./u)
+    expect(isExactSemver(manifest.devDependencies?.['@deepseek-ai/dsh-llm'])).toBe(true)
     // Stable host libraries stay declarative, but must not make pnpm install a
     // private Host copy when DSH provides them through its profile fallback.
     expect(manifest.peerDependenciesMeta?.['@deepseek-ai/cordis']?.optional).toBe(true)

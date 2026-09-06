@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink } from 'node:fs/promises'
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import vm from 'node:vm'
+
+const args = process.argv.slice(2)
+assert(args.length === 0 || args.length === 2 && args[0] === '--output-dir' && args[1],
+  'usage: node scripts/verify-package.mjs [--output-dir <directory>]')
+const outputDir = args.length === 0 ? undefined : path.resolve(args[1])
 
 function execNpm(args, options) {
   if (process.platform !== 'win32') return execFileSync('npm', args, options)
@@ -38,7 +44,10 @@ try {
   execFileSync('tar', ['-xf', path.join(temporary, packed.filename), '-C', profileModules])
   const packageRoot = path.join(profileModules, 'dsh-volcengine-provider')
   await rename(path.join(profileModules, 'package'), packageRoot)
-  await symlink(path.resolve('node_modules'), path.join(temporary, 'profiles', 'node_modules'), 'dir')
+  // Directory junctions work for an ordinary Windows user without Developer
+  // Mode or symbolic-link privileges; Unix keeps the usual directory symlink.
+  await symlink(path.resolve('node_modules'), path.join(temporary, 'profiles', 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir')
   const require = createRequire(path.join(packageRoot, 'package.json'))
   const manifest = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'))
   assert.deepEqual(
@@ -95,8 +104,48 @@ try {
   assert.equal(browser.inject.length, 1, 'Client runtime must not require one version-specific settings transport')
   assert(!browser.inject.includes('remote.settings'))
   assert(!browser.inject.includes('remote.credentials'))
+  const coldStarts = []
+  const hostCheck = fileURLToPath(new URL('./verify-package-host.mjs', import.meta.url))
+  for (const phase of ['write', 'restart']) {
+    const output = execFileSync(process.execPath, [
+      '--expose-internals', hostCheck,
+      path.dirname(profileModules), phase,
+    ], { encoding: 'utf8', timeout: 30_000 })
+    const line = output.trim().split('\n').findLast(line => line.startsWith('{'))
+    assert(line !== undefined, `No packaged Host result from ${phase}`)
+    coldStarts.push(JSON.parse(line))
+  }
+  assert.notEqual(coldStarts[0].pid, coldStarts[1].pid, 'Cold verification must use independent Node processes')
+  for (const result of coldStarts) {
+    assert.equal(result.model, 'persisted-package-model')
+    assert.equal(result.requests, 1)
+    assert.equal(result.disposed, true)
+  }
   assert.equal((await readdir(temporary)).filter(name => name.endsWith('.tgz')).length, 1)
-  process.stdout.write(`Package verified: ${packed.filename}; bundle metadata, host entry, browser ModuleLoader factory, declarations, and clean contents.\n`)
+  if (outputDir !== undefined) {
+    const packagePath = path.join(temporary, packed.filename)
+    const hostPackages = {}
+    for (const name of [
+      '@deepseek-ai/cordis', '@deepseek-ai/cordis-plugin-loader', '@deepseek-ai/cordis-plugin-include',
+      '@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-settings', '@deepseek-ai/dsh-settings-file',
+    ]) hostPackages[name] = require(`${name}/package.json`).version
+    const verification = {
+      verifiedAt: new Date().toISOString(),
+      package: {
+        name: manifest.name, version: manifest.version, filename: packed.filename,
+        sha256: createHash('sha256').update(await readFile(packagePath)).digest('hex'),
+      },
+      hostPackages,
+      runtime: { node: process.version, platform: process.platform, arch: process.arch },
+      coldStarts,
+    }
+    await mkdir(outputDir, { recursive: true })
+    // Publish the exact bytes that passed verification; a second npm pack can
+    // change the artifact after a concurrent source or version edit.
+    await copyFile(packagePath, path.join(outputDir, packed.filename))
+    await writeFile(path.join(outputDir, 'package-verification.json'), `${JSON.stringify(verification, null, 2)}\n`)
+  }
+  process.stdout.write(`Package verified: ${packed.filename}; bundle metadata, real Loader boot, persisted settings across two Node processes, Fake Ark request, browser ModuleLoader factory, declarations, and clean contents.\n`)
 } finally {
   await rm(temporary, { recursive: true, force: true })
 }

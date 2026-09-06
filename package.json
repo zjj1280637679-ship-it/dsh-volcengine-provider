@@ -1,6 +1,6 @@
 {
   "name": "dsh-volcengine-provider",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "private": true,
   "description": "Volcengine Ark provider plugin for DeepSeek Harness with transparent multimodal passthrough and freedom-preserving capability controls",
   "type": "module",
@@ -46,6 +46,7 @@
     "@deepseek-ai/dsh-launch-environment": "0.1.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-settings-file": "0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.31",
