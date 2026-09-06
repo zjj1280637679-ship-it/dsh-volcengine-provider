@@ -129,7 +129,7 @@ interface DefaultModelService {
  * packages/api/session-controller/src/agent.ts: pending selection, request header,
  * then the default model. Agent.options can predate a UI model switch.
  */
-function selectedModel(ctx: Context, agent: CommandAgent): { readonly provider: string; readonly model?: string } | undefined {
+export function selectedModel(ctx: Context, agent: CommandAgent): { readonly provider: string; readonly model?: string } | undefined {
   const projections = ctx.get('sessionProjections') as ModelSelectionProjections | undefined
   const pending = projections?.stateOf(agent.session, 'modelSelection')?.pending
   if (pending !== undefined && pending !== null) return pending

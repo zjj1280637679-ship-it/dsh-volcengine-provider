@@ -12,7 +12,7 @@ const SOURCE_PACKAGE_DIRS = {
 
 const REQUIRED_EXPORTS = {
   '@deepseek-ai/dsh-llm': [
-    'default', 'LlmAdapter', 'LlmError', 'attributionHeaders', 'createUserMessage',
+    'default', 'LlmAdapter', 'LlmError', 'attributionHeaders', 'createUserMessage', 'freezeMessage',
     'normalizeApiKey', 'ProviderRequestId',
   ],
   '@deepseek-ai/dsh-settings': ['default'],
@@ -24,6 +24,12 @@ const REQUIRED_LLM_METHODS = [
   'registerAdapter', 'listProviders',
   'registerConfigurableProviders', 'listConfigurableProviders',
   'registerModelDiscovery',
+]
+
+const REQUIRED_CLIENT_PACKAGES = [
+  '@deepseek-ai/dsh-client-connection',
+  '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-client-ui-input-trigger',
 ]
 
 function packagePath(root, name) {
@@ -74,6 +80,17 @@ async function inspect(root) {
     if (name === '@deepseek-ai/dsh-settings' && typeof loaded.module.default === 'function'
       && typeof loaded.module.default.prototype?.register !== 'function') {
       missing.push(`${name} SettingsProvider.register`)
+    }
+  }
+  for (const name of REQUIRED_CLIENT_PACKAGES) {
+    try {
+      const manifest = JSON.parse(await readFile(packagePath(root, name), 'utf8'))
+      packages[name] = manifest.version
+      if (typeof manifest.exports?.['./client'] !== 'object') {
+        missing.push(`${name} client export`)
+      }
+    } catch (error) {
+      missing.push(`${name} package (${error instanceof Error ? error.message : String(error)})`)
     }
   }
   return { root, packages, missing, compatible: missing.length === 0 }

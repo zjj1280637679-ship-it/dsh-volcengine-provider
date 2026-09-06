@@ -39,14 +39,18 @@ export class OriginalMediaStoreError extends Error {
 /** A local-volume capacity failure safe to report without exposing its path. */
 export class OriginalMediaStoreCapacityError extends OriginalMediaStoreError {
   constructor() {
-    super('This computer does not have enough free staging space for the declared original MP4.')
+    super('This computer does not have enough free staging space for the declared original media.')
     this.name = 'OriginalMediaStoreCapacityError'
   }
 }
 
 /** Reference format owned exclusively by {@link OriginalMediaStore}. */
-export interface OriginalVideoAttachmentRef extends VerbatimAttachmentRefLike {
+export interface OriginalMediaAttachmentRef extends VerbatimAttachmentRefLike {
   readonly attachmentId: `${typeof ATTACHMENT_PREFIX}${string}`
+}
+
+/** Backward-compatible shape returned by the original MP4-only entry points. */
+export interface OriginalVideoAttachmentRef extends OriginalMediaAttachmentRef {
   readonly name: 'video.mp4'
 }
 
@@ -91,16 +95,22 @@ function systemCode(error: unknown): string | undefined {
     : undefined
 }
 
-interface AttachmentIdLike {
+export interface OriginalMediaAttachmentIdLike {
   readonly attachmentId: string
   readonly name?: string
   readonly bytes?: number
 }
 
-function attachmentHash(ref: AttachmentIdLike): string | undefined {
+function attachmentHash(ref: OriginalMediaAttachmentIdLike): string | undefined {
   if (!ref.attachmentId.startsWith(ATTACHMENT_PREFIX)) return undefined
   const hash = ref.attachmentId.slice(ATTACHMENT_PREFIX.length)
   return SHA256_PATTERN.test(hash) ? hash : undefined
+}
+
+/** Names are retained as metadata, but never accepted as filesystem paths. */
+export function isSafeOriginalMediaName(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255
+    && value !== '.' && value !== '..' && !/[\\/\u0000-\u001f\u007f]/u.test(value)
 }
 
 /** Durable content store plus disk-backed, process-local staging files. */
@@ -120,11 +130,13 @@ export class OriginalMediaStore {
     })
   }
 
-  owns(ref: AttachmentIdLike): boolean {
+  owns(ref: OriginalMediaAttachmentIdLike): boolean {
     return attachmentHash(ref) !== undefined
   }
 
   private pathFor(hash: string): string {
+    // v1 originally stored only MP4. Its opaque `.mp4` suffix is retained so
+    // references created by old plugin releases stay readable after upgrade.
     return join(this.root, `${hash}.mp4`)
   }
 
@@ -144,8 +156,11 @@ export class OriginalMediaStore {
     return this.ready
   }
 
-  private reference(hash: string, bytes: number): OriginalVideoAttachmentRef {
-    return { attachmentId: `${ATTACHMENT_PREFIX}${hash}`, name: 'video.mp4', bytes }
+  private reference(hash: string, bytes: number, name: string): OriginalMediaAttachmentRef {
+    if (!isSafeOriginalMediaName(name)) {
+      throw new OriginalMediaStoreError('The original-media file name is invalid.')
+    }
+    return { attachmentId: `${ATTACHMENT_PREFIX}${hash}`, name, bytes }
   }
 
   /**
@@ -155,7 +170,7 @@ export class OriginalMediaStore {
    */
   private async assertStagingCapacity(requiredBytes: number): Promise<void> {
     if (!Number.isSafeInteger(requiredBytes) || requiredBytes <= 0) {
-      throw new OriginalMediaStoreError('The original MP4 staging reservation is invalid.')
+      throw new OriginalMediaStoreError('The original-media staging reservation is invalid.')
     }
     let available: bigint
     try {
@@ -213,7 +228,7 @@ export class OriginalMediaStore {
     signal?.throwIfAborted()
     try {
       await this.verifyPublished(hash, data.byteLength, signal)
-      return this.reference(hash, data.byteLength)
+      return this.reference(hash, data.byteLength, 'video.mp4') as OriginalVideoAttachmentRef
     } catch (error) {
       const cause = error instanceof OriginalMediaStoreError ? error.cause : undefined
       if (systemCode(cause) !== 'ENOENT') throw error
@@ -237,7 +252,7 @@ export class OriginalMediaStore {
         await this.verifyPublished(hash, data.byteLength, signal)
       }
       await this.verifyPublished(hash, data.byteLength, signal)
-      return this.reference(hash, data.byteLength)
+      return this.reference(hash, data.byteLength, 'video.mp4') as OriginalVideoAttachmentRef
     } catch (cause) {
       if (cause instanceof OriginalMediaStoreError || signal?.aborted) throw cause
       throw new OriginalMediaStoreError('The original MP4 could not be stored.', { cause })
@@ -260,7 +275,7 @@ export class OriginalMediaStore {
       file = undefined
     } catch (cause) {
       if (signal?.aborted) throw cause
-      throw new OriginalMediaStoreError('The original MP4 staging file could not be created.', { cause })
+      throw new OriginalMediaStoreError('The original-media staging file could not be created.', { cause })
     } finally {
       if (file !== undefined) await file.close().catch(() => undefined)
     }
@@ -270,7 +285,7 @@ export class OriginalMediaStore {
   async appendStaging(token: string, offset: number, data: Uint8Array, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     if (!Number.isSafeInteger(offset) || offset < 0 || data.byteLength <= 0) {
-      throw new OriginalMediaStoreError('The original MP4 staging write is invalid.')
+      throw new OriginalMediaStoreError('The original-media staging write is invalid.')
     }
     await serializedCapacityWrite(async () => {
       signal?.throwIfAborted()
@@ -284,19 +299,19 @@ export class OriginalMediaStore {
         file = await open(this.stagingPath(token), 'r+')
         const current = await file.stat()
         if (!Number.isSafeInteger(current.size) || current.size !== offset) {
-          throw new OriginalMediaStoreError('The original MP4 staging sequence failed its integrity check.')
+          throw new OriginalMediaStoreError('The original-media staging sequence failed its integrity check.')
         }
         let written = 0
         while (written < data.byteLength) {
           signal?.throwIfAborted()
           const result = await file.write(data, written, data.byteLength - written, offset + written)
-          if (result.bytesWritten <= 0) throw new OriginalMediaStoreError('The original MP4 staging write did not make progress.')
+          if (result.bytesWritten <= 0) throw new OriginalMediaStoreError('The original-media staging write did not make progress.')
           written += result.bytesWritten
         }
         await file.sync()
       } catch (cause) {
         if (cause instanceof OriginalMediaStoreError || signal?.aborted) throw cause
-        throw new OriginalMediaStoreError('The original MP4 staging write failed.', { cause })
+        throw new OriginalMediaStoreError('The original-media staging write failed.', { cause })
       } finally {
         if (file !== undefined) await file.close().catch(() => undefined)
       }
@@ -305,18 +320,21 @@ export class OriginalMediaStore {
 
   async verifyStaging(token: string, bytes: number, hash: string, signal?: AbortSignal): Promise<void> {
     if (!Number.isSafeInteger(bytes) || bytes <= 0 || !SHA256_PATTERN.test(hash)) {
-      throw new OriginalMediaStoreError('The original MP4 staging declaration is invalid.')
+      throw new OriginalMediaStoreError('The original-media staging declaration is invalid.')
     }
     await this.verifyPath(this.stagingPath(token), bytes, hash, signal)
   }
 
-  /** Verify again, then atomically promote a staged file to its content address. */
-  async commitStaging(
+  private async commitStagingAs(
     token: string,
     bytes: number,
     hash: string,
+    name: string,
     signal?: AbortSignal,
-  ): Promise<OriginalVideoAttachmentRef> {
+  ): Promise<OriginalMediaAttachmentRef> {
+    if (!isSafeOriginalMediaName(name)) {
+      throw new OriginalMediaStoreError('The original-media file name is invalid.')
+    }
     await this.verifyStaging(token, bytes, hash, signal)
     signal?.throwIfAborted()
     const staged = this.stagingPath(token)
@@ -340,14 +358,35 @@ export class OriginalMediaStore {
         await rename(staged, target)
       } catch (cause) {
         if (systemCode(cause) !== 'EEXIST' && systemCode(cause) !== 'EPERM') {
-          throw new OriginalMediaStoreError('The original MP4 could not be published.', { cause })
+          throw new OriginalMediaStoreError('The original media could not be published.', { cause })
         }
         await this.verifyPublished(hash, bytes, signal)
         await unlink(staged).catch(() => undefined)
       }
     }
     await this.verifyPublished(hash, bytes, signal)
-    return this.reference(hash, bytes)
+    return this.reference(hash, bytes, name)
+  }
+
+  /** Legacy MP4 entry point retained with its exact historical return shape. */
+  async commitStaging(
+    token: string,
+    bytes: number,
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<OriginalVideoAttachmentRef> {
+    return await this.commitStagingAs(token, bytes, hash, 'video.mp4', signal) as OriginalVideoAttachmentRef
+  }
+
+  /** Promote general Ark media while retaining its safe original base name. */
+  async commitNamedStaging(
+    token: string,
+    bytes: number,
+    hash: string,
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<OriginalMediaAttachmentRef> {
+    return this.commitStagingAs(token, bytes, hash, name, signal)
   }
 
   async discardStaging(token: string, signal?: AbortSignal): Promise<void> {
@@ -372,10 +411,25 @@ export class OriginalMediaStore {
     })
   }
 
-  /** Read an owned reference only after rechecking both length and digest. */
-  async read(ref: VerbatimAttachmentRefLike, signal?: AbortSignal): Promise<Uint8Array> {
+  /** Stream-verify an owned durable reference without materializing its bytes. */
+  async verify(ref: OriginalMediaAttachmentIdLike, signal?: AbortSignal): Promise<void> {
     const hash = attachmentHash(ref)
-    if (hash === undefined || !Number.isSafeInteger(ref.bytes) || ref.bytes <= 0) {
+    const bytes = ref.bytes
+    if (hash === undefined || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0
+      || !isSafeOriginalMediaName(ref.name)) {
+      throw new OriginalMediaStoreError('The original-media reference is invalid.')
+    }
+    await this.ensureReady()
+    signal?.throwIfAborted()
+    await this.verifyPublished(hash, bytes, signal)
+  }
+
+  /** Read an owned reference only after rechecking both length and digest. */
+  async read(ref: OriginalMediaAttachmentIdLike, signal?: AbortSignal): Promise<Uint8Array> {
+    const hash = attachmentHash(ref)
+    const bytes = ref.bytes
+    if (hash === undefined || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes <= 0
+      || !isSafeOriginalMediaName(ref.name)) {
       throw new OriginalMediaStoreError('The original-media reference is invalid.')
     }
     await this.ensureReady()
@@ -387,7 +441,7 @@ export class OriginalMediaStore {
       throw new OriginalMediaStoreError('The stored original media is unavailable.', { cause })
     }
     signal?.throwIfAborted()
-    if (stored.byteLength !== ref.bytes || digest(stored) !== hash) {
+    if (stored.byteLength !== bytes || digest(stored) !== hash) {
       throw new OriginalMediaStoreError('The stored original media failed its integrity check.')
     }
     return new Uint8Array(stored.buffer, stored.byteOffset, stored.byteLength)

@@ -6,7 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { VolcengineCard } from './Card.js'
 import { VolcenginePluginSettingsCard } from './PluginSettingsCard.js'
 import { createCardOperations } from './operations.js'
-import { registerMediaDock } from './media-registration.js'
+import { registerMediaPlus } from './media-registration.js'
 import { hasSlotRegistry } from '../host-compat.js'
 
 // Slot presence is the only hard activation dependency. Individual seats and
@@ -20,7 +20,7 @@ export function apply(ctx: Context): void {
     ctx.logger.warn('dsh-volcengine-provider: client slots capability is unavailable; provider UI was not mounted')
     return
   }
-  registerMediaDock(ctx)
+  registerMediaPlus(ctx)
   const operations = createCardOperations(ctx)
   // Provider-card is optional. Use a structural view so a Host can add or
   // remove the seat independently from the transport generation.

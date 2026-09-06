@@ -65,6 +65,8 @@ try {
   assert.equal(manifest.dsh.client.platform, 'web')
   for (const dependency of [
     '@deepseek-ai/dsh-client-connection',
+    '@deepseek-ai/dsh-client-ui-conversation',
+    '@deepseek-ai/dsh-client-ui-input-trigger',
     '@deepseek-ai/dsh-client-ui-settings-models',
     '@deepseek-ai/dsh-client-ui-settings-plugins',
     '@deepseek-ai/dsh-api-remotes',

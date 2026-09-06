@@ -95,7 +95,7 @@ it('falls back to Plugins without requiring Remote and yields when Models appear
   } finally { await ctx.fiber.dispose() }
 })
 
-it('adds a separate media dock only when the optional public services exist and removes it on unload', async () => {
+it('adds one input-row media plus only when the complete public side-path exists', async () => {
   const ctx = new cordis.Context()
   try {
     const SlotRegistry = await registry()
@@ -105,38 +105,30 @@ it('adds a separate media dock only when the optional public services exist and 
     const declare = () => ctx.slots.register({
       name: 'root', children: {
         'settings.models.provider-card': { kind: 'keyed', scope: 'root' },
-        'conversation.input.dock': { kind: 'list', scope: 'session' },
+        'conversation.input.left': { kind: 'list', scope: 'session' },
       },
     } as never, () => null)
     const dispose = declare()
-    const mediaEntries = () => ctx.slots.entries('conversation.input.dock' as never)
+    const mediaEntries = () => ctx.slots.entries('conversation.input.left' as never)
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
     expect(mediaEntries()).toHaveLength(0)
-    const removeUpload = ctx.provide('fileUpload', { available: true, upload() {} })
-    ctx.provide('remote.commands', { list() {}, execute() {} })
+    ctx.provide('connection', { isLoopback: true, rpc: { call() {} } })
     ctx.provide('modelDirectories', { directoryFor: () => ({
       store: { getSnapshot: () => ({ current: null, routable: null }), subscribe: () => () => {} },
       load: async () => {},
     }) })
     ctx.provide('sessions', { scope() {}, subagentAddress() {} })
+    ctx.provide('conversation', { input: { for: () => ({
+      setDraft() {}, insertReference() { return true }, notify() {},
+      state: { getSnapshot: () => ({ draft: '', draftRev: 0, phase: 'plain', occurrences: [] }), subscribe: () => () => {} },
+    }) } })
+    let sourceDisposed = false
+    ctx.provide('inputTriggers', { registerSource() { return () => { sourceDisposed = true } } })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(mediaEntries()).toHaveLength(1)
-    expect(mediaEntries()[0]!.options).toMatchObject({ id: 'volcengine-media', order: 30 })
-    const hostInjected = (mediaEntries()[0]!.inject as unknown as (id: string) => { operations: { mode?: string } })('session-host')
-    expect(hostInjected.operations.mode).toBe('host-media')
-    removeUpload()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(mediaEntries()).toHaveLength(0)
-    ctx.provide('connection', { isLoopback: true, rpc: { call() {} } })
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(mediaEntries()).toHaveLength(1)
-    const fallbackInjected = (mediaEntries()[0]!.inject as unknown as (id: string) => { operations: { mode?: string } })('session-fallback')
-    expect(fallbackInjected.operations.mode).toBe('loopback-video')
-    ctx.provide('fileUpload', { available: true, upload() {} })
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(mediaEntries()).toHaveLength(1)
-    const restoredInjected = (mediaEntries()[0]!.inject as unknown as (id: string) => { operations: { mode?: string } })('session-restored')
-    expect(restoredInjected.operations.mode).toBe('host-media')
+    expect(mediaEntries()[0]!.options).toMatchObject({ id: 'volcengine-native-media-plus', order: 31 })
+    const injected = (mediaEntries()[0]!.inject as unknown as (id: string) => { operations: { addFiles: unknown } })('session-host')
+    expect(typeof injected.operations.addFiles).toBe('function')
     expect(ctx.slots.entries('settings.models.provider-card')).toHaveLength(1)
     dispose()
     expect(mediaEntries()).toHaveLength(0)
@@ -144,10 +136,11 @@ it('adds a separate media dock only when the optional public services exist and 
     expect(mediaEntries()).toHaveLength(1)
     await mounted.dispose()
     expect(mediaEntries()).toHaveLength(0)
+    expect(sourceDisposed).toBe(true)
   } finally { await ctx.fiber.dispose() }
 })
 
-it('mounts the loopback-only original MP4 fallback when the Host has no fileUpload service', async () => {
+it('does not mount a partial or non-loopback input path', async () => {
   const ctx = new cordis.Context()
   try {
     const SlotRegistry = await registry()
@@ -155,40 +148,18 @@ it('mounts the loopback-only original MP4 fallback when the Host has no fileUplo
     const mounted = ctx.plugin(plugin)
     await mounted.await()
     ctx.slots.register({
-      name: 'root', children: { 'conversation.input.dock': { kind: 'list', scope: 'session' } },
+      name: 'root', children: { 'conversation.input.left': { kind: 'list', scope: 'session' } },
     } as never, () => null)
-    ctx.provide('remote.commands', { list() {}, execute() {} })
     ctx.provide('modelDirectories', { directoryFor: () => ({
       store: { getSnapshot: () => ({ current: null, routable: null }), subscribe: () => () => {} },
       load: async () => {},
     }) })
     ctx.provide('sessions', { scope() {}, subagentAddress() {} })
-    ctx.provide('connection', { isLoopback: true, rpc: { call() {} } })
-    await new Promise(resolve => setTimeout(resolve, 0))
-    const entries = ctx.slots.entries('conversation.input.dock' as never)
-    expect(entries).toHaveLength(1)
-    const injected = (entries[0]!.inject as unknown as (id: string) => { operations: { mode?: string } })('session-a')
-    expect(injected.operations.mode).toBe('loopback-video')
-    await mounted.dispose()
-  } finally { await ctx.fiber.dispose() }
-})
-
-it('does not expose the raw-file fallback to a non-loopback browser', async () => {
-  const ctx = new cordis.Context()
-  try {
-    const SlotRegistry = await registry()
-    await ctx.plugin(SlotRegistry).await()
-    const mounted = ctx.plugin(plugin)
-    await mounted.await()
-    ctx.slots.register({
-      name: 'root', children: { 'conversation.input.dock': { kind: 'list', scope: 'session' } },
-    } as never, () => null)
-    ctx.provide('remote.commands', { list() {}, execute() {} })
-    ctx.provide('modelDirectories', { directoryFor() {} })
-    ctx.provide('sessions', { scope() {}, subagentAddress() {} })
+    ctx.provide('conversation', { input: { for() {} } })
+    ctx.provide('inputTriggers', { registerSource() { return () => {} } })
     ctx.provide('connection', { isLoopback: false, rpc: { call() {} } })
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(ctx.slots.entries('conversation.input.dock' as never)).toHaveLength(0)
+    expect(ctx.slots.entries('conversation.input.left' as never)).toHaveLength(0)
     await mounted.dispose()
   } finally { await ctx.fiber.dispose() }
 })

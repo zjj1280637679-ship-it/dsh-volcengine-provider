@@ -119,6 +119,40 @@ describe('plugin-owned original media store', () => {
     await expect(readFile(join(stagingRoot, `${token}.part`))).rejects.toThrow()
   })
 
+  it('retains a safe original name for general media while preserving the v1 opaque disk layout', async () => {
+    const { root, store } = await fixture()
+    const token = '4'.repeat(64)
+    const bytes = Uint8Array.from([137, 80, 78, 71])
+    const hash = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex')
+    await store.beginStaging(token, bytes.byteLength)
+    await store.appendStaging(token, 0, bytes)
+    const ref = await store.commitNamedStaging(token, bytes.byteLength, hash, '原始画面.png')
+
+    expect(ref).toEqual({
+      attachmentId: `volcengine-original:v1:sha256:${hash}`,
+      name: '原始画面.png',
+      bytes: bytes.byteLength,
+    })
+    // The suffix is an old v1 implementation detail, not a media conversion.
+    expect(await readFile(join(root, `${hash}.mp4`))).toEqual(Buffer.from(bytes))
+    const restarted = new OriginalMediaStore(root)
+    await expect(restarted.verify(ref)).resolves.toBeUndefined()
+    expect(await restarted.read(ref)).toEqual(bytes)
+  })
+
+  it('rejects path-like general media names without consuming the staged bytes', async () => {
+    const { store } = await fixture()
+    const token = '5'.repeat(64)
+    const bytes = Uint8Array.of(1)
+    const hash = (await import('node:crypto')).createHash('sha256').update(bytes).digest('hex')
+    await store.beginStaging(token, bytes.byteLength)
+    await store.appendStaging(token, 0, bytes)
+    await expect(store.commitNamedStaging(token, bytes.byteLength, hash, 'C:\\private\\clip.mp4'))
+      .rejects.toThrow('file name is invalid')
+    await expect(store.verifyStaging(token, bytes.byteLength, hash)).resolves.toBeUndefined()
+    await store.discardStaging(token)
+  })
+
   it('reserves declared bytes against live volume capacity while retaining runtime headroom', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-volcengine-capacity-'))
     roots.push(root)

@@ -3,6 +3,16 @@ import { createHash, randomBytes, type Hash } from 'node:crypto'
 
 import type { Context } from '@deepseek-ai/cordis'
 
+import {
+  NATIVE_MEDIA_PROTOCOL_VERSION,
+  NATIVE_MEDIA_RECOMMENDED_CHUNK_BYTES,
+  type NativeMediaBundleSummary,
+} from './native-media-protocol.js'
+import {
+  NativeMediaInputError,
+  NativeMediaLifecycleError,
+  type NativeMediaStaging,
+} from './native-media-staging.js'
 import type { OriginalVideoAttachmentRef } from './original-media-store.js'
 import { OriginalMediaStore, OriginalMediaStoreCapacityError } from './original-media-store.js'
 
@@ -15,6 +25,8 @@ export const ORIGINAL_MEDIA_MAX_ACTIVE_STAGINGS = 8
 export const ORIGINAL_MEDIA_TOKEN_TTL_MS = 5 * 60 * 1000
 
 const TOKEN_PATTERN = /^[a-f0-9]{64}$/u
+const NATIVE_BUNDLE_PATTERN = /^[a-f0-9]{32}$/u
+const NATIVE_FILE_PATTERN = /^[a-f0-9]{32}$/u
 const SESSION_ID_MAX_CHARS = 512
 const SUBMISSION_ID_MAX_CHARS = 128
 const FILE_NAME_MAX_CHARS = 255
@@ -124,23 +136,23 @@ function validIdentity(value: unknown, maxChars: number): value is string {
     && !/[\u0000-\u001f\u007f]/u.test(value)
 }
 
-function canonicalBase64(value: string): Uint8Array {
+function canonicalBase64(value: string, subject = 'MP4'): Uint8Array {
   const maximumEncodedChars = 4 * Math.ceil(ORIGINAL_MEDIA_MAX_CHUNK_BYTES / 3)
   if (value.length > maximumEncodedChars) {
-    throw new MediaFallbackInputError('The MP4 chunk exceeds the 1 MiB per-request transport ceiling.')
+    throw new MediaFallbackInputError(`The ${subject} chunk exceeds the 1 MiB per-request transport ceiling.`)
   }
   if (value.length === 0 || value.length % 4 !== 0
     || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
-    throw new MediaFallbackInputError('The MP4 chunk must use canonical base64 encoding.')
+    throw new MediaFallbackInputError(`The ${subject} chunk must use canonical base64 encoding.`)
   }
   const decoded = Buffer.from(value, 'base64')
   if (decoded.byteLength > ORIGINAL_MEDIA_MAX_CHUNK_BYTES) {
     decoded.fill(0)
-    throw new MediaFallbackInputError('The MP4 chunk exceeds the 1 MiB per-request transport ceiling.')
+    throw new MediaFallbackInputError(`The ${subject} chunk exceeds the 1 MiB per-request transport ceiling.`)
   }
   if (decoded.byteLength === 0 || decoded.toString('base64') !== value) {
     decoded.fill(0)
-    throw new MediaFallbackInputError('The MP4 chunk must use canonical base64 encoding.')
+    throw new MediaFallbackInputError(`The ${subject} chunk must use canonical base64 encoding.`)
   }
   return new Uint8Array(decoded.buffer, decoded.byteOffset, decoded.byteLength)
 }
@@ -552,7 +564,70 @@ function resourceExhausted(message: string): RpcResult<never> {
   return { ok: false, error: { code: 'resource-exhausted', message, details: {} } }
 }
 
-export function createMediaFallbackRpcHandler(staging: OriginalVideoStaging): RpcHandler {
+interface NativeBundleRequest {
+  readonly sessionId: string
+  readonly bundleId: string
+}
+
+interface NativeAppendRequest extends NativeBundleRequest {
+  readonly fileId: string
+  readonly offset: number
+  readonly data: Uint8Array
+}
+
+function parseNativeBundleRequest(payload: unknown, endpoint: string): NativeBundleRequest {
+  if (!plainRecord(payload) || !exactKeys(payload, ['bundleId', 'sessionId'])
+    || !validIdentity(payload.sessionId, SESSION_ID_MAX_CHARS)
+    || typeof payload.bundleId !== 'string' || !NATIVE_BUNDLE_PATTERN.test(payload.bundleId)) {
+    throw new MediaFallbackInputError(`The native-media ${endpoint} request is invalid.`)
+  }
+  return { sessionId: payload.sessionId, bundleId: payload.bundleId }
+}
+
+function parseNativeListRequest(payload: unknown): { readonly sessionId: string } {
+  if (!plainRecord(payload) || !exactKeys(payload, ['sessionId'])
+    || !validIdentity(payload.sessionId, SESSION_ID_MAX_CHARS)) {
+    throw new MediaFallbackInputError('The native-media list request is invalid.')
+  }
+  return { sessionId: payload.sessionId }
+}
+
+function parseNativeAppendRequest(payload: unknown): NativeAppendRequest {
+  if (!plainRecord(payload) || !exactKeys(payload, ['bundleId', 'data', 'fileId', 'offset', 'sessionId'])
+    || !validIdentity(payload.sessionId, SESSION_ID_MAX_CHARS)
+    || typeof payload.bundleId !== 'string' || !NATIVE_BUNDLE_PATTERN.test(payload.bundleId)
+    || typeof payload.fileId !== 'string' || !NATIVE_FILE_PATTERN.test(payload.fileId)
+    || !Number.isSafeInteger(payload.offset) || (payload.offset as number) < 0
+    || typeof payload.data !== 'string') {
+    throw new MediaFallbackInputError('The native-media append request is invalid.')
+  }
+  return {
+    sessionId: payload.sessionId,
+    bundleId: payload.bundleId,
+    fileId: payload.fileId,
+    offset: payload.offset as number,
+    data: canonicalBase64(payload.data, 'native-media'),
+  }
+}
+
+function nativeSummary(status: NativeMediaBundleSummary): NativeMediaBundleSummary {
+  return {
+    bundleId: status.bundleId,
+    label: status.label,
+    state: status.state,
+    expectedProvider: status.expectedProvider,
+    expectedModel: status.expectedModel,
+  }
+}
+
+function unavailableNativeBundle(): RpcResult<never> {
+  return badRequest('The native media bundle is invalid or no longer available.')
+}
+
+export function createMediaFallbackRpcHandler(
+  staging: OriginalVideoStaging,
+  nativeStaging: NativeMediaStaging,
+): RpcHandler {
   return async (endpoint, payload, signal) => {
     if (signal.aborted) return cancelled()
     try {
@@ -581,13 +656,63 @@ export function createMediaFallbackRpcHandler(staging: OriginalVideoStaging): Rp
         const request = parseTokenRequest(payload, 'discard')
         return success({ discarded: await staging.discard(request.sessionId, request.token, signal) })
       }
+      if (endpoint === 'native-capabilities') {
+        if (!plainRecord(payload) || Object.keys(payload).length !== 0) {
+          return badRequest('The native-media capabilities request is invalid.')
+        }
+        return success({
+          version: NATIVE_MEDIA_PROTOCOL_VERSION,
+          nativeDrafts: true,
+          chunkBytes: NATIVE_MEDIA_RECOMMENDED_CHUNK_BYTES,
+        })
+      }
+      if (endpoint === 'native-begin') {
+        const result = await nativeStaging.begin(payload, signal)
+        if (signal.aborted) {
+          const sessionId = plainRecord(payload) && typeof payload.sessionId === 'string' ? payload.sessionId : ''
+          await nativeStaging.discard(sessionId, result.bundleId).catch(() => undefined)
+          return cancelled()
+        }
+        return success({
+          bundleId: result.bundleId,
+          files: result.files.map(file => ({ fileId: file.fileId })),
+        })
+      }
+      if (endpoint === 'native-append') {
+        const request = parseNativeAppendRequest(payload)
+        try {
+          return success(await nativeStaging.append(request, signal))
+        } finally {
+          request.data.fill(0)
+        }
+      }
+      if (endpoint === 'native-commit') {
+        const request = parseNativeBundleRequest(payload, 'commit')
+        return success(nativeSummary(await nativeStaging.commit(request.sessionId, request.bundleId, signal)))
+      }
+      if (endpoint === 'native-status') {
+        const request = parseNativeBundleRequest(payload, 'status')
+        const status = await nativeStaging.status(request.sessionId, request.bundleId, signal)
+        return status === undefined ? unavailableNativeBundle() : success(nativeSummary(status))
+      }
+      if (endpoint === 'native-list') {
+        const request = parseNativeListRequest(payload)
+        return success({ bundles: (await nativeStaging.list(request.sessionId, signal)).map(nativeSummary) })
+      }
+      if (endpoint === 'native-discard') {
+        const request = parseNativeBundleRequest(payload, 'discard')
+        return success({ discarded: await nativeStaging.discard(request.sessionId, request.bundleId, signal) })
+      }
       return badRequest('The original-media endpoint is unknown.')
     } catch (error) {
       if (signal.aborted) return cancelled()
-      if (error instanceof MediaFallbackInputError) return badRequest(error.message)
+      if (error instanceof MediaFallbackInputError || error instanceof NativeMediaInputError) {
+        return badRequest(error.message)
+      }
       if (error instanceof MediaFallbackResourceError || error instanceof OriginalMediaStoreCapacityError) {
         return resourceExhausted(error.message)
       }
+      if (error instanceof NativeMediaLifecycleError) return cancelled()
       return { ok: false, error: {
         code: 'internal', message: 'The original-media request could not be completed.', details: {},
       } }
@@ -596,12 +721,26 @@ export function createMediaFallbackRpcHandler(staging: OriginalVideoStaging): Rp
 }
 
 /** Register only against the three-argument Host API that can enforce loopback authority. */
-export function registerMediaFallbackRpc(ctx: Context, staging: OriginalVideoStaging): void {
+export function registerMediaFallbackRpc(
+  ctx: Context,
+  staging: OriginalVideoStaging,
+  nativeStaging: NativeMediaStaging,
+): void {
   ctx.effect(() => {
     const stopSweep = staging.startExpirySweep()
+    let stopNativeSweep: () => void
+    try {
+      stopNativeSweep = nativeStaging.startExpirySweep()
+    } catch (cause) {
+      stopSweep()
+      throw cause
+    }
     return async () => {
       stopSweep()
-      await staging.dispose()
+      stopNativeSweep()
+      const results = await Promise.allSettled([staging.dispose(), nativeStaging.dispose()])
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failed !== undefined) throw failed.reason
     }
   })
   ctx.inject(['connection'], connectionCtx => {
@@ -612,7 +751,7 @@ export function registerMediaFallbackRpc(ctx: Context, staging: OriginalVideoSta
     connectionCtx.effect(() => handle.call(
       rpc,
       '/volcengine-media',
-      createMediaFallbackRpcHandler(staging),
+      createMediaFallbackRpcHandler(staging, nativeStaging),
       { authority: 'loopback' },
     ))
   })

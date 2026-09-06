@@ -22,6 +22,9 @@ import { registerLocalMediaCommand, registerMediaCommand } from './media-command
 import { createOriginalMediaStore, type OriginalMediaStore } from './original-media-store.js'
 import { installCompatibleSettingsSection } from './settings-compat.js'
 import { inspectLlmHost } from './host-compat.js'
+import { isArkChatMediaDeclaration } from './media-file-types.js'
+import { registerNativeMediaMerge } from './native-media-merge.js'
+import { NativeMediaStaging } from './native-media-staging.js'
 
 export { Config } from './config.js'
 export const name = SETTINGS_NS
@@ -78,8 +81,18 @@ async function readVerbatimBytes(
 function mediaResolver(ctx: Context, originals: OriginalMediaStore): ResolveMediaBytes {
   return async (block, signal) => {
     if (originals.owns(block.attachment)) {
-      if (block.type !== 'volcengine-video' || block.mediaType !== 'video/mp4') {
-        throw new LlmError('The plugin-owned original media reference does not match an MP4 video block.', 'INVALID_MEDIA_REFERENCE')
+      if (block.type === 'image') {
+        throw new LlmError('A plugin-owned original media reference cannot masquerade as a Host image.', 'INVALID_MEDIA_REFERENCE')
+      }
+      const declaration = block.type === 'volcengine-image'
+        ? { modality: 'image', mediaType: block.mediaType }
+        : block.type === 'volcengine-video'
+          ? { modality: 'video', mediaType: block.mediaType }
+          : block.type === 'volcengine-audio'
+            ? { modality: 'audio', mediaType: block.mediaType, ...(block.format === undefined ? {} : { format: block.format }) }
+            : undefined
+      if (declaration === undefined || !isArkChatMediaDeclaration(declaration)) {
+        throw new LlmError('The plugin-owned original media reference does not match its Ark media declaration.', 'INVALID_MEDIA_REFERENCE')
       }
       return originals.read(block.attachment, signal)
     }
@@ -146,12 +159,17 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const originals = createOriginalMediaStore(ctx)
   const staging = new OriginalVideoStaging(originals)
+  // Legacy tokens and native draft bundles have independent staging-instance
+  // lifetimes. Their durable content-addressed objects intentionally share the
+  // same root so the adapter can resolve either reference after a restart.
+  const nativeStaging = new NativeMediaStaging(createOriginalMediaStore(ctx))
   const adapter = new ConfiguredVolcengineAdapter({ route: routeFor, resolveKey, resolveMediaBytes: mediaResolver(ctx, originals) })
   let registered: AdapterRegistrationHandle | undefined
   let directory: DirectoryRegistrationHandle | undefined
   let ownedProviders = new Set<string>()
   let ownedDirectory = new Set<string>()
-  registerMediaFallbackRpc(ctx, staging)
+  registerMediaFallbackRpc(ctx, staging, nativeStaging)
+  registerNativeMediaMerge(ctx, nativeStaging, provider => ownedProviders.has(provider))
   registerMediaCommand(ctx, provider => ownedProviders.has(provider))
   registerLocalMediaCommand(ctx, provider => ownedProviders.has(provider), staging)
   const entriesFor = (value: ResolvedConfig) => Object.entries(value.routes).map(([key, route]) => ({

@@ -13,6 +13,11 @@ import {
   ORIGINAL_MEDIA_RECOMMENDED_CHUNK_BYTES, ORIGINAL_MEDIA_TOKEN_TTL_MS,
   MediaFallbackLifecycleError, OriginalVideoStaging, registerMediaFallbackRpc,
 } from '../../src/media-fallback-rpc.js'
+import {
+  NATIVE_MEDIA_PROTOCOL_VERSION,
+  NATIVE_MEDIA_RECOMMENDED_CHUNK_BYTES,
+} from '../../src/native-media-protocol.js'
+import { NativeMediaStaging } from '../../src/native-media-staging.js'
 import { OriginalMediaStore, OriginalMediaStoreCapacityError } from '../../src/original-media-store.js'
 
 function beginRequest(bytes: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -46,10 +51,14 @@ function waitForAbort(signal: AbortSignal | undefined): Promise<never> {
 const contexts: Context[] = []
 const roots: string[] = []
 const stagings: OriginalVideoStaging[] = []
+const nativeStagings: NativeMediaStaging[] = []
 const FIXTURE_INSTANCE = '9'.repeat(32)
+const NATIVE_FIXTURE_INSTANCE = '8'.repeat(32)
+const NATIVE_BUNDLE = 'a'.repeat(32)
 afterEach(async () => {
   vi.useRealTimers()
   for (const ctx of contexts.splice(0).reverse()) await ctx.fiber.dispose()
+  for (const staging of nativeStagings.splice(0).reverse()) await staging.dispose()
   for (const staging of stagings.splice(0).reverse()) await staging.dispose()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
@@ -62,6 +71,26 @@ async function fixture(options: ConstructorParameters<typeof OriginalVideoStagin
   const staging = new OriginalVideoStaging(store, options)
   stagings.push(staging)
   return { root, stagingRoot, store, staging }
+}
+
+async function nativeFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-volcengine-native-staging-'))
+  roots.push(root)
+  const store = new OriginalMediaStore(root, { instanceId: NATIVE_FIXTURE_INSTANCE })
+  const nativeStaging = new NativeMediaStaging(store, {
+    mintFileId: () => 'b'.repeat(32),
+  })
+  nativeStagings.push(nativeStaging)
+  return { root, store, nativeStaging }
+}
+
+function nativeBeginRequest(bytes: number, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    expectedProvider: 'volcengine-coding-plan', expectedModel: 'seed-video',
+    files: [{ name: 'still.png', bytes, modality: 'image', mediaType: 'image/png' }],
+    ...overrides,
+  }
 }
 
 async function upload(staging: OriginalVideoStaging, data: Uint8Array, chunkBytes = data.byteLength) {
@@ -332,7 +361,8 @@ describe('disk-backed original video staging', () => {
 describe('loopback media RPC v2 boundary', () => {
   it('advertises the hard per-RPC chunk ceiling without a file limit and supports the full flow', async () => {
     const { staging } = await fixture()
-    const handler = createMediaFallbackRpcHandler(staging)
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
     const signal = new AbortController().signal
     await expect(handler('capabilities', {}, signal)).resolves.toEqual({
       ok: true,
@@ -358,7 +388,8 @@ describe('loopback media RPC v2 boundary', () => {
 
   it('contains malformed input, cancellation, unknown endpoints, and internal causes', async () => {
     const { staging } = await fixture()
-    const handler = createMediaFallbackRpcHandler(staging)
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
     const signal = new AbortController().signal
     const malformed = await handler('begin', beginRequest(1, { name: 'C:\\private\\clip.mp4' }), signal)
     expect(malformed).toMatchObject({ ok: false, error: { code: 'bad-request' } })
@@ -377,7 +408,8 @@ describe('loopback media RPC v2 boundary', () => {
 
   it('reports local staging capacity exhaustion without exposing a filesystem path', async () => {
     const { store, staging } = await fixture()
-    const handler = createMediaFallbackRpcHandler(staging)
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
     vi.spyOn(store, 'beginStaging').mockRejectedValueOnce(new OriginalMediaStoreCapacityError())
     const result = await handler('begin', beginRequest(1), new AbortController().signal)
     expect(result).toMatchObject({
@@ -399,14 +431,20 @@ describe('loopback media RPC v2 boundary', () => {
       return ctx.effect(() => disposed)
     })
     ctx.provide('connection', { rpc: { handle } })
+    const originalStaging = new OriginalVideoStaging(new OriginalMediaStore(root, { instanceId: FIXTURE_INSTANCE }))
+    const nativeStaging = new NativeMediaStaging(new OriginalMediaStore(root, { instanceId: NATIVE_FIXTURE_INSTANCE }))
+    const originalDispose = vi.spyOn(originalStaging, 'dispose')
+    const nativeDispose = vi.spyOn(nativeStaging, 'dispose')
     const mounted = ctx.plugin((pluginCtx: Context) => registerMediaFallbackRpc(
-      pluginCtx, new OriginalVideoStaging(new OriginalMediaStore(root)),
+      pluginCtx, originalStaging, nativeStaging,
     ))
     await mounted
     expect(handle).toHaveBeenCalledTimes(1)
     expect(captured).toMatchObject({ channel: '/volcengine-media', options: { authority: 'loopback' } })
     await mounted.dispose()
     expect(disposed).toHaveBeenCalledTimes(1)
+    expect(originalDispose).toHaveBeenCalledTimes(1)
+    expect(nativeDispose).toHaveBeenCalledTimes(1)
 
     const legacy = new Context()
     contexts.push(legacy)
@@ -415,8 +453,125 @@ describe('loopback media RPC v2 boundary', () => {
     const twoArgumentHandle = vi.fn(function (_channel: string, _handler: unknown) { return async () => undefined })
     legacy.provide('connection', { rpc: { handle: twoArgumentHandle } })
     await legacy.plugin((pluginCtx: Context) => registerMediaFallbackRpc(
-      pluginCtx, new OriginalVideoStaging(new OriginalMediaStore(legacyRoot)),
+      pluginCtx,
+      new OriginalVideoStaging(new OriginalMediaStore(legacyRoot, { instanceId: FIXTURE_INSTANCE })),
+      new NativeMediaStaging(new OriginalMediaStore(legacyRoot, { instanceId: NATIVE_FIXTURE_INSTANCE })),
     ))
     expect(twoArgumentHandle).not.toHaveBeenCalled()
+  })
+})
+
+describe('loopback native media RPC v3 boundary', () => {
+  it('moves exact bytes in bounded chunks without imposing a bundle-size policy', async () => {
+    const { staging } = await fixture()
+    const { store, nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
+    const signal = new AbortController().signal
+
+    await expect(handler('native-capabilities', {}, signal)).resolves.toEqual({
+      ok: true,
+      value: {
+        version: NATIVE_MEDIA_PROTOCOL_VERSION,
+        nativeDrafts: true,
+        chunkBytes: NATIVE_MEDIA_RECOMMENDED_CHUNK_BYTES,
+      },
+    })
+
+    const bytes = new Uint8Array(ORIGINAL_MEDIA_MAX_CHUNK_BYTES + 3)
+    for (let index = 0; index < bytes.byteLength; index++) bytes[index] = index % 251
+    const begun = await handler('native-begin', nativeBeginRequest(bytes.byteLength), signal)
+    expect(begun).toEqual({
+      ok: true,
+      value: { bundleId: NATIVE_BUNDLE, files: [{ fileId: 'b'.repeat(32) }] },
+    })
+    for (let offset = 0; offset < bytes.byteLength; offset += ORIGINAL_MEDIA_MAX_CHUNK_BYTES) {
+      const chunk = bytes.subarray(offset, Math.min(bytes.byteLength, offset + ORIGINAL_MEDIA_MAX_CHUNK_BYTES))
+      await expect(handler('native-append', {
+        sessionId: 'session-one', bundleId: NATIVE_BUNDLE, fileId: 'b'.repeat(32),
+        offset, data: encoded(chunk),
+      }, signal)).resolves.toEqual({ ok: true, value: { receivedBytes: offset + chunk.byteLength } })
+    }
+    await expect(handler('native-commit', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toEqual({
+      ok: true,
+      value: {
+        bundleId: NATIVE_BUNDLE,
+        label: 'still.png',
+        state: 'ready',
+        expectedProvider: 'volcengine-coding-plan',
+        expectedModel: 'seed-video',
+      },
+    })
+
+    await expect(nativeStaging.claim('session-one', NATIVE_BUNDLE, 'message-one')).resolves.toBeDefined()
+    const materialized = await nativeStaging.materialize(
+      'session-one', NATIVE_BUNDLE, 'message-one', 'volcengine-coding-plan', 'seed-video',
+    )
+    expect(materialized).toBeDefined()
+    const persisted = await store.read(materialized!.files[0]!.attachment)
+    expect(createHash('sha256').update(persisted).digest('hex'))
+      .toBe(createHash('sha256').update(bytes).digest('hex'))
+  })
+
+  it('strictly rejects malformed or oversized base64 at the RPC boundary', async () => {
+    const { staging } = await fixture()
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
+    const signal = new AbortController().signal
+    await expect(handler('native-begin', nativeBeginRequest(3), signal)).resolves.toMatchObject({ ok: true })
+
+    const request = {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE, fileId: 'b'.repeat(32), offset: 0,
+    }
+    await expect(handler('native-append', { ...request, data: 'AQI' }, signal)).resolves.toMatchObject({
+      ok: false, error: { code: 'bad-request', message: expect.stringContaining('canonical base64') },
+    })
+    const oversized = new Uint8Array(ORIGINAL_MEDIA_MAX_CHUNK_BYTES + 1)
+    await expect(handler('native-append', { ...request, data: encoded(oversized) }, signal)).resolves.toMatchObject({
+      ok: false, error: { code: 'bad-request', message: expect.stringContaining('per-request transport ceiling') },
+    })
+  })
+
+  it('returns the protocol summary for ready and claimed status/list calls', async () => {
+    const { staging } = await fixture()
+    const { nativeStaging } = await nativeFixture()
+    const handler = createMediaFallbackRpcHandler(staging, nativeStaging)
+    const signal = new AbortController().signal
+    const bytes = Uint8Array.from([1, 2, 3])
+    await handler('native-begin', nativeBeginRequest(bytes.byteLength), signal)
+    await handler('native-append', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE, fileId: 'b'.repeat(32),
+      offset: 0, data: encoded(bytes),
+    }, signal)
+    const expected = {
+      bundleId: NATIVE_BUNDLE,
+      label: 'still.png',
+      state: 'ready' as const,
+      expectedProvider: 'volcengine-coding-plan',
+      expectedModel: 'seed-video',
+    }
+    await handler('native-commit', { sessionId: 'session-one', bundleId: NATIVE_BUNDLE }, signal)
+    await expect(handler('native-status', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toEqual({ ok: true, value: expected })
+    await expect(handler('native-list', { sessionId: 'session-one' }, signal)).resolves.toEqual({
+      ok: true, value: { bundles: [expected] },
+    })
+
+    await nativeStaging.claim('session-one', NATIVE_BUNDLE, 'message-one')
+    const claimed = { ...expected, state: 'claimed' as const }
+    await expect(handler('native-status', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toEqual({ ok: true, value: claimed })
+    await expect(handler('native-list', { sessionId: 'session-one' }, signal)).resolves.toEqual({
+      ok: true, value: { bundles: [claimed] },
+    })
+    await expect(handler('native-discard', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toEqual({ ok: true, value: { discarded: true } })
+    await expect(handler('native-status', {
+      sessionId: 'session-one', bundleId: NATIVE_BUNDLE,
+    }, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
   })
 })

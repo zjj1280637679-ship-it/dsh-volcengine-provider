@@ -123,12 +123,7 @@ function ModelEditor({ model, index, disabled, update, remove }: ModelEditorProp
           }, h('option', { value: 'inherit' }, modality === 'text' ? '未设置（文本默认可用）' : '未设置'),
           h('option', { value: 'force_enable' }, '强制开启'),
           h('option', { value: 'force_disable' }, '强制关闭')))),
-        h('details', null,
-          h('summary', { style: { cursor: 'pointer' } }, '如何发送媒体'),
-          h('p', { style: small }, '可在支持原文件上传的 Harness 会话中展开“方舟原始媒体”，添加文件并手动填写 MIME 类型后发送。音频可单独填写格式。'),
-          h('p', { style: small }, '也可添加附件并使用 /ark-media 命令；每个附件按顺序填写一个 MIME 类型。'),
-          h('p', { style: small }, h('code', null, '/ark-media video/mp4,audio/mpeg -- 总结这两个附件')),
-          h('p', { style: small }, '“方舟原始媒体”会保留图片、视频和音频的原文件，不自动压缩或转码。普通图片仍可通过聊天附件发送。'))),
+      ),
       field('自定义请求体模式', h('select', {
         style: inputStyle, 'aria-label': '自定义请求体模式', value: value.customBodyMode ?? 'merge', disabled,
         onChange: (event: { target: { value: string } }) => change({ customBodyMode: event.target.value as 'merge' | 'patch' | 'raw' }),

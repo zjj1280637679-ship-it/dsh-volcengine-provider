@@ -1,0 +1,374 @@
+import { Context } from '@deepseek-ai/cordis'
+import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { formatNativeMediaMarker } from '../../src/native-media-marker.js'
+import {
+  NativeMediaMessageMerger,
+  registerNativeMediaMerge,
+  type NativeMediaMergeAgent,
+  type NativeMediaMergeStaging,
+} from '../../src/native-media-merge.js'
+import type {
+  MaterializedNativeMediaBundle,
+  MaterializedNativeMediaFile,
+  NativeMediaBundleStatus,
+} from '../../src/native-media-staging.js'
+
+const SESSION = 'session-one'
+const PROVIDER = 'volcengine-coding-plan'
+const MODEL = 'doubao-seed-2.0-lite'
+const FIRST = '1'.repeat(32)
+const SECOND = '2'.repeat(32)
+
+const contexts: Context[] = []
+afterEach(async () => {
+  vi.useRealTimers()
+  for (const ctx of contexts.splice(0).reverse()) await ctx.fiber.dispose()
+})
+
+function context(): Context {
+  const ctx = new Context()
+  contexts.push(ctx)
+  return ctx
+}
+
+function file(
+  fileId: string,
+  modality: 'image' | 'video' | 'audio',
+  mediaType: string,
+  name: string,
+  format?: 'mp3' | 'wav' | 'aac' | 'm4a',
+): MaterializedNativeMediaFile {
+  const sha256 = fileId.padEnd(64, fileId[0] ?? 'a').slice(0, 64)
+  return {
+    fileId: fileId.padEnd(32, fileId[0] ?? 'a').slice(0, 32),
+    name,
+    bytes: 7,
+    modality,
+    mediaType,
+    ...(format === undefined ? {} : { format }),
+    sha256,
+    attachment: {
+      attachmentId: `volcengine-original:v1:sha256:${sha256}`,
+      name,
+      bytes: 7,
+    },
+  }
+}
+
+function bundle(
+  bundleId: string,
+  messageId: string,
+  files: readonly MaterializedNativeMediaFile[],
+): MaterializedNativeMediaBundle {
+  return {
+    bundleId,
+    marker: formatNativeMediaMarker(bundleId),
+    sessionId: SESSION,
+    messageId,
+    expectedProvider: PROVIDER,
+    expectedModel: MODEL,
+    files,
+  }
+}
+
+function status(bundleId: string): NativeMediaBundleStatus {
+  return {
+    bundleId,
+    marker: formatNativeMediaMarker(bundleId),
+    label: `${bundleId}.media`,
+    state: 'ready',
+    expectedProvider: PROVIDER,
+    expectedModel: MODEL,
+    phase: 'armed',
+    files: [{ fileId: bundleId, receivedBytes: 7, bytes: 7 }],
+  }
+}
+
+function stagingFixture(): NativeMediaMergeStaging {
+  const content = new Map<string, readonly MaterializedNativeMediaFile[]>([
+    [FIRST, [
+      file('a', 'image', 'image/png', 'screen.png'),
+      file('b', 'video', 'video/quicktime', 'clip.mov'),
+      file('c', 'audio', 'audio/x-m4a', 'voice.m4a', 'm4a'),
+    ]],
+    [SECOND, [file('d', 'video', 'video/mp4', 'second.mp4')]],
+  ])
+  return {
+    status: vi.fn(async (sessionId: string, bundleId: string) => (
+      sessionId === SESSION && content.has(bundleId) ? status(bundleId) : undefined
+    )),
+    claimMany: vi.fn(async (sessionId: string, bundleIds: readonly string[], messageId: string) => (
+      sessionId === SESSION && bundleIds.every(bundleId => content.has(bundleId))
+        ? bundleIds.map(bundleId => ({
+          bundleId, marker: formatNativeMediaMarker(bundleId), sessionId, messageId,
+        }))
+        : undefined
+    )),
+    materialize: vi.fn(async (
+      sessionId: string, bundleId: string, messageId: string, provider: string, model: string,
+    ) => (
+      sessionId === SESSION && provider === PROVIDER && model === MODEL && content.has(bundleId)
+        ? bundle(bundleId, messageId, content.get(bundleId)!)
+        : undefined
+    )),
+    confirm: vi.fn(async () => true),
+    discard: vi.fn(async () => true),
+    discardClaim: vi.fn(async () => false),
+  }
+}
+
+function agent(selection: () => { provider: string; model: string } = () => ({
+  provider: PROVIDER, model: MODEL,
+})): NativeMediaMergeAgent {
+  return {
+    id: SESSION,
+    session: { id: SESSION, requestHeader: () => ({ config: selection() }) },
+    steer: vi.fn(),
+  }
+}
+
+function direct(text: string): UserMessage {
+  return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } })
+}
+
+function textOf(message: UserMessage): string {
+  return message.content.filter(block => block.type === 'text').map(block => block.text).join('')
+}
+
+describe('native composer media merge', () => {
+  it('reuses the accepted native message and inserts every bundle at its marker position', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, provider => provider === PROVIDER)
+    const markerOne = formatNativeMediaMarker(FIRST)
+    const markerTwo = formatNativeMediaMarker(SECOND)
+    const source = direct(`${markerOne} ${markerTwo} explain both files`)
+    const signal = new AbortController().signal
+
+    const result = await merger.merge(agent(), [source], signal)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]!.id).toBe(source.id)
+    expect(result[0]!.source).toEqual(source.source)
+    expect(result[0]!.content).toEqual([
+      expect.objectContaining({ type: 'volcengine-image', mediaType: 'image/png' }),
+      expect.objectContaining({ type: 'volcengine-video', mediaType: 'video/quicktime' }),
+      expect.objectContaining({ type: 'volcengine-audio', mediaType: 'audio/x-m4a', format: 'm4a' }),
+      { type: 'text', text: ' ' },
+      expect.objectContaining({ type: 'volcengine-video', mediaType: 'video/mp4' }),
+      { type: 'text', text: ' explain both files' },
+    ])
+    expect(JSON.stringify(result)).not.toContain('__dsh_volc_media_v1_')
+    expect(Object.isFrozen(result[0])).toBe(true)
+    expect(staging.claimMany).toHaveBeenCalledOnce()
+    expect(staging.claimMany).toHaveBeenCalledWith(
+      SESSION, [FIRST, SECOND], String(source.id), signal,
+    )
+
+    merger.observeSessionEvent({ id: SESSION }, { type: 'user/message', data: result[0] })
+    await merger.whenConfirmationsIdle()
+    expect(staging.confirm).toHaveBeenCalledTimes(2)
+    expect(staging.confirm).toHaveBeenCalledWith(SESSION, FIRST, String(source.id))
+    expect(staging.confirm).toHaveBeenCalledWith(SESSION, SECOND, String(source.id))
+  })
+
+  it('removes duplicate and unavailable references while preserving accepted text', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const marker = formatNativeMediaMarker(FIRST)
+    const duplicate = direct(`${marker} ${marker} keep this question`)
+
+    const duplicateResult = (await merger.merge(
+      agent(), [duplicate], new AbortController().signal,
+    ))[0]!
+    expect(textOf(duplicateResult)).toContain(' keep this question')
+    expect(textOf(duplicateResult)).toContain('[VOLCENGINE_MEDIA_OMITTED code=DUPLICATE_REFERENCE]')
+    expect(JSON.stringify(duplicateResult)).not.toContain(marker)
+    expect(staging.status).not.toHaveBeenCalled()
+
+    const unknown = 'f'.repeat(32)
+    const unavailable = direct(`${formatNativeMediaMarker(unknown)} question remains`)
+    const unavailableResult = (await merger.merge(
+      agent(), [unavailable], new AbortController().signal,
+    ))[0]!
+    expect(textOf(unavailableResult)).toContain(' question remains')
+    expect(textOf(unavailableResult)).toContain('[VOLCENGINE_MEDIA_OMITTED code=BUNDLE_UNAVAILABLE]')
+    expect(JSON.stringify(unavailableResult)).not.toContain('__dsh_volc_media_v1_')
+    expect(staging.claimMany).not.toHaveBeenCalled()
+  })
+
+  it('never consumes a media marker moved behind user text', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const marker = formatNativeMediaMarker(FIRST)
+    const message = direct(`ordinary text before ${marker} remains`)
+
+    const result = (await merger.merge(
+      agent(), [message], new AbortController().signal,
+    ))[0]!
+
+    expect(textOf(result)).toContain('ordinary text before ')
+    expect(textOf(result)).toContain(' remains')
+    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=MALFORMED_REFERENCE]')
+    expect(JSON.stringify(result)).not.toContain(marker)
+    expect(staging.status).not.toHaveBeenCalled()
+    expect(staging.claimMany).not.toHaveBeenCalled()
+  })
+
+  it('contains materialization errors and never exposes their paths, bytes, or marker', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    vi.mocked(staging.materialize).mockRejectedValueOnce(
+      new Error('C:\\private\\movie.mp4 secret-provider-byte-sequence'),
+    )
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const message = direct(`${formatNativeMediaMarker(FIRST)} keep this accepted text`)
+
+    const result = (await merger.merge(agent(), [message], new AbortController().signal))[0]!
+
+    expect(textOf(result)).toContain(' keep this accepted text')
+    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=MEDIA_UNAVAILABLE]')
+    expect(JSON.stringify(result)).not.toMatch(/private|secret-provider|byte-sequence|__dsh_volc/u)
+    expect(staging.discardClaim).toHaveBeenCalledWith(
+      SESSION, FIRST, String(message.id), expect.any(AbortSignal),
+    )
+    expect(result.content.some(block => block.type.startsWith('volcengine-'))).toBe(false)
+  })
+
+  it('rechecks live routing after materialization and drops media on a model switch', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    let model = MODEL
+    const original = staging.materialize
+    vi.mocked(staging.materialize).mockImplementationOnce(async (...args) => {
+      const result = await original(...args)
+      model = 'changed-after-claim'
+      return result
+    })
+    const merger = new NativeMediaMessageMerger(ctx, staging, provider => provider === PROVIDER)
+    const message = direct(`${formatNativeMediaMarker(FIRST)} explain this please`)
+
+    const result = (await merger.merge(
+      agent(() => ({ provider: PROVIDER, model })),
+      [message],
+      new AbortController().signal,
+    ))[0]!
+
+    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=ROUTE_CHANGED]')
+    expect(textOf(result)).toContain(' explain this please')
+    expect(result.content.some(block => block.type.startsWith('volcengine-'))).toBe(false)
+    expect(staging.discardClaim).toHaveBeenCalledWith(
+      SESSION, FIRST, String(message.id), expect.any(AbortSignal),
+    )
+  })
+
+  it('never holds accepted text behind a stalled fallback cleanup', async () => {
+    vi.useFakeTimers()
+    const ctx = context()
+    const staging = stagingFixture()
+    vi.mocked(staging.status).mockResolvedValueOnce(undefined)
+    vi.mocked(staging.discardClaim).mockImplementationOnce(async (
+      _sessionId, _bundleId, _messageId, signal,
+    ) => await new Promise<boolean>((_resolve, reject) => {
+      const aborted = (): void => reject(signal?.reason ?? new Error('aborted'))
+      if (signal?.aborted) aborted()
+      else signal?.addEventListener('abort', aborted, { once: true })
+    }))
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const message = direct(`${formatNativeMediaMarker(FIRST)} keep text moving`)
+
+    const result = (await merger.merge(
+      agent(), [message], new AbortController().signal,
+    ))[0]!
+
+    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=BUNDLE_UNAVAILABLE]')
+    expect(textOf(result)).toContain(' keep text moving')
+    await vi.advanceTimersByTimeAsync(2_000)
+    await merger.whenConfirmationsIdle()
+  })
+
+  it('does not let a non-user source claim a composer bundle or leak its marker', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const marker = formatNativeMediaMarker(FIRST)
+    const message = createUserMessage({
+      content: [{ type: 'text', text: `plugin text ${marker} survives` }],
+      source: { kind: 'plugin', plugin: 'fixture' },
+    })
+
+    const result = (await merger.merge(agent(), [message], new AbortController().signal))[0]!
+
+    expect(textOf(result)).toContain('plugin text ')
+    expect(textOf(result)).toContain(' survives')
+    expect(textOf(result)).toContain('[VOLCENGINE_MEDIA_OMITTED code=UNTRUSTED_SOURCE]')
+    expect(JSON.stringify(result)).not.toContain(marker)
+    expect(staging.status).not.toHaveBeenCalled()
+    expect(staging.claimMany).not.toHaveBeenCalled()
+  })
+
+  it('does not confirm if another middleware replaces the augmented content before commit', async () => {
+    const ctx = context()
+    const staging = stagingFixture()
+    const merger = new NativeMediaMessageMerger(ctx, staging, () => true)
+    const original = direct(`${formatNativeMediaMarker(FIRST)} question`)
+    const accepted = (await merger.merge(
+      agent(), [original], new AbortController().signal,
+    ))[0]!
+    expect(accepted.id).toBe(original.id)
+
+    merger.observeSessionEvent({ id: SESSION }, { type: 'user/message', data: original })
+    await merger.whenConfirmationsIdle()
+
+    expect(staging.confirm).not.toHaveBeenCalled()
+    expect(staging.discardClaim).toHaveBeenCalledWith(
+      SESSION, FIRST, String(original.id), undefined,
+    )
+  })
+
+  it('awaits the downstream pre-step decision before merging and confirms only post-commit', async () => {
+    const handlers = new Map<string, unknown>()
+    const fakeContext = {
+      get: () => undefined,
+      logger: { warn: vi.fn() },
+      on: (name: string, listener: unknown) => { handlers.set(name, listener) },
+    } as unknown as Context
+    const staging = stagingFixture()
+    let downstreamFinished = false
+    vi.mocked(staging.status).mockImplementationOnce(async (_sessionId, bundleId) => {
+      expect(downstreamFinished).toBe(true)
+      return status(bundleId)
+    })
+    const merger = registerNativeMediaMerge(fakeContext, staging, () => true)
+    const message = direct(`${formatNativeMediaMarker(FIRST)} native send`)
+    type Decision = { kind: 'reject' } | { kind: 'enter'; messages: UserMessage[] }
+    type PreStep = (
+      payload: { agent: NativeMediaMergeAgent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal },
+      next: () => Promise<Decision>,
+    ) => Promise<Decision>
+    type SessionEvent = (
+      session: { id: string }, event: { type: string; data: unknown },
+    ) => void
+    const preStep = handlers.get('agent/pre-step') as PreStep
+    const published = handlers.get('session/event') as SessionEvent
+
+    const decision = await preStep({
+      agent: agent(), messages: [message], turn: 1, step: 1,
+      signal: new AbortController().signal,
+    }, async () => {
+      downstreamFinished = true
+      return { kind: 'enter', messages: [message] }
+    })
+
+    expect(decision.kind).toBe('enter')
+    expect(staging.confirm).not.toHaveBeenCalled()
+    const accepted = (decision as Extract<Decision, { kind: 'enter' }>).messages[0]!
+    published({ id: SESSION }, { type: 'user/message', data: accepted })
+    await merger.whenConfirmationsIdle()
+    expect(staging.confirm).toHaveBeenCalledWith(SESSION, FIRST, String(message.id))
+  })
+})
