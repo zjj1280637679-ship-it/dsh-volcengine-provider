@@ -51,6 +51,7 @@ jobs:
       - name: Seven bounded requests from the release package
         env:
           ARK_CODING_PLAN_API_KEY: ${{ secrets.ARK_CODING_PLAN_API_KEY }}
+          DSH_LIVE_VIDEO_MAX_TOKENS: '4096'
           DSH_RELEASE_PACKAGE_ROOT: ${{ github.workspace }}/release/installed/package
           DSH_LIVE_REPORT: release/live-review-results.json
         run: node scripts/live-release.mjs

@@ -11,6 +11,8 @@ import { matchesFixture } from './live-coding-plan-media.mjs'
 
 const SOURCE_COMMIT = process.env.GITHUB_SHA ?? 'local'
 const reportPath = process.env.DSH_LIVE_REPORT ?? 'live-review-results.json'
+const videoMaxTokens = Number(process.env.DSH_LIVE_VIDEO_MAX_TOKENS ?? 4096)
+if (!Number.isSafeInteger(videoMaxTokens) || videoMaxTokens <= 0) throw new Error('Invalid video probe output budget')
 const route = getDefaultRoute('coding-plan')
 const key = process.env.ARK_CODING_PLAN_API_KEY?.trim() ?? ''
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -44,7 +46,9 @@ if (key && !/\s/u.test(key)) {
   const fixtureRoot = new URL('../tests/fixtures/live-media/', import.meta.url)
   const manifest = JSON.parse(await readFile(new URL('manifest.json', fixtureRoot), 'utf8'))
   for (const test of tests) {
-    const result = {model:test.model, modality:test.modality, text:'', completed:false, semanticMatch:false}
+    const maxTokens = test.modality === 'video' ? videoMaxTokens : test.modality === 'text' ? 256 : 1024
+    const timeoutMs = test.modality === 'video' ? 120_000 : 60_000
+    const result = {model:test.model, modality:test.modality, maxTokens, timeoutMs, text:'', completed:false, semanticMatch:false}
     report.cases.push(result)
     const fixture = test.file ? manifest[test.file] : undefined
     const bytes = test.file ? await readFile(new URL(test.file, fixtureRoot)) : undefined
@@ -111,8 +115,8 @@ if (key && !/\s/u.test(key)) {
         : [{type:'text',text:test.prompt}]
       for await (const chunk of adapter.stream({
         provider:'volcengine-coding-plan', model:test.model,
-        maxTokens:test.modality === 'text' ? 256 : 1024,
-        signal:AbortSignal.timeout(60_000),
+        maxTokens,
+        signal:AbortSignal.timeout(timeoutMs),
         messages:[createUserMessage({content,source:{kind:'user'}})],
       })) {
         if (chunk.type === 'text-delta') result.text += chunk.text
@@ -140,4 +144,3 @@ await writeFile(reportPath, safeReport + '\n')
 console.log(safeReport)
 if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, '# Verified release package live probe\n\n<pre>' + safeReport.replaceAll('&','&amp;').replaceAll('<','&lt;') + '</pre>\n')
 if (!report.ok) process.exitCode = 1
-
